@@ -5,7 +5,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-Run a production Metaflow metadata service for free, without setting up any cloud infrastructure.
+Serverless Metaflow metadata service on free-tier Postgres — no always-on servers, no infra to manage.
 
 ## The problem
 
