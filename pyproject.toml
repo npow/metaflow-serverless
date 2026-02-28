@@ -18,11 +18,11 @@ dependencies = [
 ]
 
 [project.scripts]
-mf-setup = "metaflow_ephemeral.cli:setup_entrypoint"
-mf-ui = "metaflow_ephemeral.cli:ui_entrypoint"
+mf-setup = "metaflow_serverless.cli:setup_entrypoint"
+mf-ui = "metaflow_serverless.cli:ui_entrypoint"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/metaflow_ephemeral"]
+packages = ["src/metaflow_serverless"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

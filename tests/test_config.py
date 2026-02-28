@@ -1,5 +1,5 @@
 """
-Tests for metaflow_ephemeral.config (MetaflowConfig and StackConfig).
+Tests for metaflow_serverless.config (MetaflowConfig and StackConfig).
 """
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from metaflow_ephemeral.config import MetaflowConfig, StackConfig
+from metaflow_serverless.config import MetaflowConfig, StackConfig
 
 
 class TestMetaflowConfig:

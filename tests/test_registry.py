@@ -1,11 +1,11 @@
 """
-Tests for metaflow_ephemeral.providers.registry.
+Tests for metaflow_serverless.providers.registry.
 """
 from __future__ import annotations
 
 import pytest
 
-from metaflow_ephemeral.providers.registry import (
+from metaflow_serverless.providers.registry import (
     COMPATIBLE_STACKS,
     COMPUTE_PROVIDERS,
     DATABASE_PROVIDERS,

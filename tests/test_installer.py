@@ -1,5 +1,5 @@
 """
-Tests for metaflow_ephemeral.installer logic.
+Tests for metaflow_serverless.installer logic.
 """
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
 
-from metaflow_ephemeral.installer import _pick_asset, ensure_cli
+from metaflow_serverless.installer import _pick_asset, ensure_cli
 
 
 class TestEnsureCli:

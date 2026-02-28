@@ -456,7 +456,7 @@ class SupabaseComputeProvider(ComputeProvider):
         ``edge_function/``.  Raises ``RuntimeError`` if not found.
         """
         # This file lives at:
-        #   <repo_root>/src/metaflow_ephemeral/providers/supabase.py
+        #   <repo_root>/src/metaflow_serverless/providers/supabase.py
         # The edge function lives at:
         #   <repo_root>/edge_function/
         candidate = Path(__file__).resolve()

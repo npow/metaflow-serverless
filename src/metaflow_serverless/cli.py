@@ -6,8 +6,8 @@ Provides two commands:
     mf-ui      - Local Metaflow UI proxy
 
 These are registered as ``project.scripts`` in pyproject.toml:
-    mf-setup = "metaflow_ephemeral.cli:setup_entrypoint"
-    mf-ui    = "metaflow_ephemeral.cli:ui_entrypoint"
+    mf-setup = "metaflow_serverless.cli:setup_entrypoint"
+    mf-ui    = "metaflow_serverless.cli:ui_entrypoint"
 """
 
 from __future__ import annotations

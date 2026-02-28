@@ -1,5 +1,5 @@
 """
-Tests for the UI proxy module (metaflow_ephemeral.ui_proxy.proxy).
+Tests for the UI proxy module (metaflow_serverless.ui_proxy.proxy).
 """
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from metaflow_ephemeral.ui_proxy.proxy import (
+from metaflow_serverless.ui_proxy.proxy import (
     _build_app,
     _compute_diff,
 )
@@ -112,15 +112,15 @@ class TestRunProxy:
     async def test_run_proxy_exits_if_no_service_url(self, tmp_path):
         """run_proxy calls sys.exit(1) if no service URL is configured."""
         import sys
-        from metaflow_ephemeral.config import MetaflowConfig
-        from metaflow_ephemeral.ui_proxy.proxy import run_proxy
+        from metaflow_serverless.config import MetaflowConfig
+        from metaflow_serverless.ui_proxy.proxy import run_proxy
 
         # Write a config with no service URL.
         cfg_path = tmp_path / ".metaflowconfig"
         cfg = MetaflowConfig(path=cfg_path)
         # Don't write any URL.
 
-        with patch("metaflow_ephemeral.ui_proxy.proxy.MetaflowConfig") as mock_cfg_cls:
+        with patch("metaflow_serverless.ui_proxy.proxy.MetaflowConfig") as mock_cfg_cls:
             mock_cfg = MagicMock()
             mock_cfg.get_service_url.return_value = None
             mock_cfg_cls.return_value = mock_cfg

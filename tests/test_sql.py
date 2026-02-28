@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from metaflow_ephemeral.sql.loader import load_schema, load_procedures
+from metaflow_serverless.sql.loader import load_schema, load_procedures
 
 
 class TestSchemaLoads:

@@ -4,7 +4,7 @@ import importlib.resources
 
 
 def _read(filename: str) -> str:
-    package = importlib.resources.files("metaflow_ephemeral.sql")
+    package = importlib.resources.files("metaflow_serverless.sql")
     return (package / filename).read_text(encoding="utf-8")
 
 

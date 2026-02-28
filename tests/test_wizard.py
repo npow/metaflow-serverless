@@ -1,5 +1,5 @@
 """
-Tests for the setup wizard (metaflow_ephemeral.setup.wizard).
+Tests for the setup wizard (metaflow_serverless.setup.wizard).
 """
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import pytest
 
-from metaflow_ephemeral.providers.base import (
+from metaflow_serverless.providers.base import (
     ComputeCredentials,
     DatabaseCredentials,
     StorageCredentials,
 )
-from metaflow_ephemeral.providers.registry import COMPATIBLE_STACKS, compatible_storage
+from metaflow_serverless.providers.registry import COMPATIBLE_STACKS, compatible_storage
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ class TestWizardWritesConfig:
         When all providers successfully provision, _write_config is called
         with the METAFLOW_SERVICE_URL and storage keys from the credentials.
         """
-        from metaflow_ephemeral.setup.wizard import SetupWizard
+        from metaflow_serverless.setup.wizard import SetupWizard
 
         cfg_path = tmp_path / ".metaflowconfig"
         wizard = SetupWizard(config_path=str(cfg_path))
@@ -88,7 +88,7 @@ class TestWizardWritesConfig:
 
     async def test_wizard_write_config_sets_default_metadata(self, tmp_path):
         """_write_config sets METAFLOW_DEFAULT_METADATA to 'service'."""
-        from metaflow_ephemeral.setup.wizard import SetupWizard
+        from metaflow_serverless.setup.wizard import SetupWizard
 
         cfg_path = tmp_path / ".metaflowconfig"
         wizard = SetupWizard(config_path=str(cfg_path))
@@ -103,7 +103,7 @@ class TestWizardMigrationsAsyncpg:
         When db_name is not 'supabase', _run_migrations_asyncpg is called
         with the db DSN.
         """
-        from metaflow_ephemeral.setup.wizard import SetupWizard, _run_migrations_asyncpg
+        from metaflow_serverless.setup.wizard import SetupWizard, _run_migrations_asyncpg
 
         cfg_path = tmp_path / ".metaflowconfig"
         wizard = SetupWizard(config_path=str(cfg_path))
@@ -114,7 +114,7 @@ class TestWizardMigrationsAsyncpg:
         mock_conn.close = AsyncMock()
 
         with patch(
-            "metaflow_ephemeral.setup.wizard._run_migrations_asyncpg",
+            "metaflow_serverless.setup.wizard._run_migrations_asyncpg",
             new_callable=AsyncMock,
         ) as mock_migrate:
             await wizard._run_migrations("neon", db_creds, "testproject")
@@ -122,7 +122,7 @@ class TestWizardMigrationsAsyncpg:
 
     async def test_wizard_migrations_asyncpg_connects_and_executes(self, tmp_path):
         """_run_migrations_asyncpg calls asyncpg.connect and executes SQL."""
-        from metaflow_ephemeral.setup.wizard import _run_migrations_asyncpg
+        from metaflow_serverless.setup.wizard import _run_migrations_asyncpg
 
         mock_conn = AsyncMock()
         mock_conn.execute = AsyncMock()
@@ -138,7 +138,7 @@ class TestWizardMigrationsAsyncpg:
 
     async def test_wizard_migrations_supabase_path(self, tmp_path):
         """When db_name is 'supabase', the supabase migration path is taken."""
-        from metaflow_ephemeral.setup.wizard import SetupWizard
+        from metaflow_serverless.setup.wizard import SetupWizard
 
         cfg_path = tmp_path / ".metaflowconfig"
         wizard = SetupWizard(config_path=str(cfg_path))
@@ -150,7 +150,7 @@ class TestWizardMigrationsAsyncpg:
             new_callable=AsyncMock,
         ) as mock_supa_migrate:
             with patch(
-                "metaflow_ephemeral.setup.wizard._run_migrations_asyncpg",
+                "metaflow_serverless.setup.wizard._run_migrations_asyncpg",
                 new_callable=AsyncMock,
             ) as mock_asyncpg:
                 await wizard._run_migrations("supabase", db_creds, "testproject")
@@ -192,7 +192,7 @@ class TestCompatibleStorageFiltered:
         The wizard filters STORAGE_PROVIDERS using compatible_storage.
         Verify that the filtering logic works as expected.
         """
-        from metaflow_ephemeral.providers.registry import STORAGE_PROVIDERS
+        from metaflow_serverless.providers.registry import STORAGE_PROVIDERS
 
         compute_name = "cloud-run"
         compat_storage_names = compatible_storage(compute_name)

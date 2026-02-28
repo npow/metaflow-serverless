@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from metaflow_ephemeral.providers.base import (
+from metaflow_serverless.providers.base import (
     DatabaseCredentials,
     StorageCredentials,
     ComputeCredentials,
@@ -16,17 +16,17 @@ from metaflow_ephemeral.providers.base import (
     StorageProvider,
     ComputeProvider,
 )
-from metaflow_ephemeral.providers.supabase import (
+from metaflow_serverless.providers.supabase import (
     SupabaseDatabaseProvider,
     SupabaseStorageProvider,
     SupabaseComputeProvider,
 )
-from metaflow_ephemeral.providers.neon import NeonProvider
-from metaflow_ephemeral.providers.cockroachdb import CockroachDBProvider
-from metaflow_ephemeral.providers.cloudflare_r2 import CloudflareR2Provider
-from metaflow_ephemeral.providers.backblaze_b2 import BackblazeB2Provider
-from metaflow_ephemeral.providers.cloud_run import CloudRunProvider
-from metaflow_ephemeral.providers.render import RenderProvider
+from metaflow_serverless.providers.neon import NeonProvider
+from metaflow_serverless.providers.cockroachdb import CockroachDBProvider
+from metaflow_serverless.providers.cloudflare_r2 import CloudflareR2Provider
+from metaflow_serverless.providers.backblaze_b2 import BackblazeB2Provider
+from metaflow_serverless.providers.cloud_run import CloudRunProvider
+from metaflow_serverless.providers.render import RenderProvider
 
 
 # ---------------------------------------------------------------------------
