@@ -5,7 +5,8 @@ build-backend = "hatchling.build"
 [project]
 name = "metaflow-serverless"
 version = "0.1.0"
-description = "Zero-infra Metaflow metadata service using serverless Postgres"
+description = "Run the Metaflow metadata service on serverless Postgres — no always-on servers"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "click>=8.1",
