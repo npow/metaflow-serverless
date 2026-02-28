@@ -1,7 +1,7 @@
-# metaflow-lite
+# metaflow-serverless
 
-[![CI](https://github.com/npow/metaflow-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/npow/metaflow-lite/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/metaflow-ephemeral-service)](https://pypi.org/project/metaflow-ephemeral-service/)
+[![CI](https://github.com/npow/metaflow-serverless/actions/workflows/ci.yml/badge.svg)](https://github.com/npow/metaflow-serverless/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/metaflow-serverless)](https://pypi.org/project/metaflow-serverless/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
@@ -81,7 +81,7 @@ Starts a local proxy on `localhost:8083` that downloads and serves the Metaflow 
 
 ## How it works
 
-`metaflow-lite` replaces the Metaflow metadata service with a serverless stack — no persistent server required:
+`metaflow-serverless` replaces the Metaflow metadata service with a serverless stack — no persistent server required:
 
 ```
 Metaflow client
@@ -104,8 +104,8 @@ All business logic lives in the database as stored procedures. The compute layer
 ## Development
 
 ```bash
-git clone https://github.com/npow/metaflow-lite
-cd metaflow-lite
+git clone https://github.com/npow/metaflow-serverless
+cd metaflow-serverless
 pip install -e ".[dev]"
 pytest -v
 ```

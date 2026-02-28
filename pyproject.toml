@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "metaflow-ephemeral-service"
+name = "metaflow-serverless"
 version = "0.1.0"
 description = "Zero-infra Metaflow metadata service using serverless Postgres"
 requires-python = ">=3.10"
