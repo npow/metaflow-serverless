@@ -47,17 +47,25 @@ class StackConfig:
 
 class MetaflowConfig:
     """
-    Manages the ~/.metaflowconfig JSON configuration file.
+    Manages the Metaflow global config JSON file.
 
     The config file stores Metaflow client settings including the metadata
     service URL, datastore configuration, and any provider-specific settings
     written by this tool.
     """
 
-    DEFAULT_PATH = Path.home() / ".metaflowconfig"
+    DEFAULT_PATH = Path.home() / ".metaflowconfig" / "config.json"
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or self.DEFAULT_PATH
+        if self.path.exists() and self.path.is_dir():
+            self.path = self.path / "config.json"
+
+    def _resolved_path(self) -> Path:
+        """Return the concrete config file path."""
+        if self.path.exists() and self.path.is_dir():
+            return self.path / "config.json"
+        return self.path
 
     def read(self) -> dict[str, Any]:
         """
@@ -65,11 +73,12 @@ class MetaflowConfig:
 
         Returns an empty dict if the file does not exist or contains invalid JSON.
         """
-        if not self.path.exists():
+        path = self._resolved_path()
+        if not path.exists():
             return {}
 
         try:
-            text = self.path.read_text(encoding="utf-8").strip()
+            text = path.read_text(encoding="utf-8").strip()
             if not text:
                 return {}
             return json.loads(text)
@@ -87,8 +96,9 @@ class MetaflowConfig:
         current = self.read()
         current.update(data)
 
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
+        path = self._resolved_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
             json.dumps(current, indent=2) + "\n",
             encoding="utf-8",
         )

@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import secrets
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
+import httpx
 from rich.console import Console
 
 from ..installer import ensure_cli
@@ -47,6 +51,25 @@ def _run_sync(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]
     return subprocess.run(cmd, text=True, capture_output=True, **kwargs)
 
 
+async def _require_supabase_login() -> None:
+    """Require an existing authenticated Supabase CLI session."""
+    rc, _, stderr = await _run_async(
+        ["supabase", "projects", "list", "--output", "json"]
+    )
+    if rc == 0:
+        console.print(
+            "[green]Supabase CLI already authenticated; continuing.[/green]"
+        )
+        return
+    details = stderr.strip() or "Supabase CLI is not authenticated."
+    raise RuntimeError(
+        "Supabase authentication is required before setup.\n"
+        "Run `supabase login` in your terminal, complete browser auth, and "
+        "re-run `mf-setup`.\n"
+        f"Details: {details}"
+    )
+
+
 def _get_org_id() -> str:
     """
     Retrieve the user's Supabase organisation ID.
@@ -70,6 +93,29 @@ def _get_org_id() -> str:
         raise RuntimeError(
             f"Unexpected output from 'supabase orgs list':\n{result.stdout}"
         ) from exc
+
+
+async def _get_project_host(project_ref: str) -> str:
+    """Return the database host for *project_ref* from `supabase projects list`."""
+    rc, stdout, stderr = await _run_async(
+        ["supabase", "projects", "list", "--output", "json"]
+    )
+    if rc != 0:
+        raise RuntimeError(
+            f"Could not list Supabase projects (exit {rc}):\n{stderr.strip()}"
+        )
+    projects = json.loads(stdout) if stdout.strip() else []
+    project = next((p for p in projects if p.get("id") == project_ref), None)
+    if not project:
+        raise RuntimeError(f"Supabase project {project_ref!r} was not found.")
+
+    db_info = project.get("database", {})
+    host = ""
+    if isinstance(db_info, dict):
+        host = str(db_info.get("host", "")).strip()
+    if not host:
+        host = f"db.{project_ref}.supabase.co"
+    return host
 
 
 def _generate_password(length: int = 32) -> str:
@@ -119,6 +165,41 @@ async def _wait_for_project(
     )
 
 
+async def _create_storage_bucket(
+    project_ref: str,
+    bucket_name: str,
+    service_key: str,
+) -> None:
+    """Create a storage bucket via the Supabase Storage API."""
+    url = f"https://{project_ref}.supabase.co/storage/v1/bucket"
+    headers = {
+        "Authorization": f"Bearer {service_key}",
+        "apikey": service_key,
+        "Content-Type": "application/json",
+    }
+    payload = {"id": bucket_name, "name": bucket_name, "public": False}
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(url, headers=headers, json=payload)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to create Supabase storage bucket {bucket_name!r}: {exc}"
+        ) from exc
+
+    if response.status_code in {200, 201}:
+        return
+
+    body = response.text
+    if response.status_code in {400, 409} and "already" in body.lower():
+        return
+
+    raise RuntimeError(
+        f"Failed to create Supabase storage bucket {bucket_name!r} "
+        f"(HTTP {response.status_code}):\n{body}"
+    )
+
+
 class SupabaseDatabaseProvider(DatabaseProvider):
     """
     Provisions a Postgres database on Supabase.
@@ -145,18 +226,7 @@ class SupabaseDatabaseProvider(DatabaseProvider):
         authentication.
         """
         await self.ensure_cli_installed()
-        console.print("[bold]Opening browser for Supabase login...[/bold]")
-        proc = await asyncio.create_subprocess_exec(
-            "supabase", "login",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"Supabase login failed (exit {proc.returncode}):\n"
-                f"{stderr.decode().strip()}"
-            )
+        await _require_supabase_login()
 
     async def provision(self, project_name: str) -> DatabaseCredentials:
         """
@@ -182,11 +252,19 @@ class SupabaseDatabaseProvider(DatabaseProvider):
             (p for p in projects if p.get("name") == project_name), None
         )
 
+        db_password = ""
         if existing:
             project_ref: str = existing["id"]
             console.print(
                 f"[yellow]Reusing existing Supabase project:[/yellow] {project_ref}"
             )
+            db_password = os.environ.get("SUPABASE_DB_PASSWORD", "").strip()
+            if not db_password:
+                raise RuntimeError(
+                    "Existing Supabase project detected, but DB password is unknown.\n"
+                    "Set SUPABASE_DB_PASSWORD to that project's Postgres password "
+                    "and re-run setup, or choose a new project name."
+                )
         else:
             org_id = _get_org_id()
             db_password = _generate_password()
@@ -224,27 +302,13 @@ class SupabaseDatabaseProvider(DatabaseProvider):
             )
             await _wait_for_project(project_ref, timeout_seconds=120)
 
-        # Retrieve the connection string.
-        rc, stdout, stderr = await _run_async(
-            [
-                "supabase", "db", "url",
-                "--project-ref", project_ref,
-                "--output", "json",
-            ]
+        host = await _get_project_host(project_ref)
+        username = "postgres"
+        database = "postgres"
+        dsn = (
+            f"postgresql://{username}:{quote(db_password, safe='')}@{host}:5432/"
+            f"{database}?sslmode=require"
         )
-        if rc != 0:
-            raise RuntimeError(
-                f"Failed to retrieve Supabase DB URL for project {project_ref!r} "
-                f"(exit {rc}):\n{stderr.strip()}"
-            )
-
-        try:
-            conn_data = json.loads(stdout)
-            dsn: str = conn_data["uri"]
-        except (json.JSONDecodeError, KeyError) as exc:
-            raise RuntimeError(
-                f"Unexpected output from 'supabase db url':\n{stdout}"
-            ) from exc
 
         parsed = urlparse(dsn)
         return DatabaseCredentials(
@@ -286,20 +350,9 @@ class SupabaseStorageProvider(StorageProvider):
         await ensure_cli("supabase")
 
     async def login(self) -> None:
-        """Log in to Supabase (delegates to Supabase CLI browser OAuth)."""
+        """Require prior Supabase CLI authentication."""
         await self.ensure_cli_installed()
-        console.print("[bold]Opening browser for Supabase login...[/bold]")
-        proc = await asyncio.create_subprocess_exec(
-            "supabase", "login",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"Supabase login failed (exit {proc.returncode}):\n"
-                f"{stderr.decode().strip()}"
-            )
+        await _require_supabase_login()
 
     async def _resolve_project_ref(self) -> str:
         """
@@ -345,22 +398,7 @@ class SupabaseStorageProvider(StorageProvider):
 
         endpoint_url = f"https://{project_ref}.supabase.co/storage/v1/s3"
 
-        # Create the bucket.
-        rc, stdout, stderr = await _run_async(
-            [
-                "supabase", "storage", "create",
-                bucket_name,
-                "--project-ref", project_ref,
-            ]
-        )
-        # Exit code 1 with "already exists" in output is acceptable.
-        if rc != 0 and "already exists" not in (stdout + stderr).lower():
-            raise RuntimeError(
-                f"Failed to create Supabase storage bucket {bucket_name!r} "
-                f"(exit {rc}):\n{stderr.strip()}"
-            )
-
-        # Retrieve the project API keys for S3 credentials.
+        # Retrieve API keys for S3 credentials and Storage API auth.
         rc, stdout, stderr = await _run_async(
             [
                 "supabase", "projects", "api-keys",
@@ -390,16 +428,27 @@ class SupabaseStorageProvider(StorageProvider):
         elif isinstance(keys_data, dict):
             keys_by_name = {k: v for k, v in keys_data.items() if isinstance(v, str)}
 
-        access_key_id = keys_by_name.get("anon", keys_by_name.get("anon key", ""))
-        secret_access_key = keys_by_name.get(
+        api_access_key_id = keys_by_name.get("anon", keys_by_name.get("anon key", ""))
+        api_secret_access_key = keys_by_name.get(
             "service_role", keys_by_name.get("service_role key", "")
         )
 
-        if not access_key_id or not secret_access_key:
+        if not api_access_key_id or not api_secret_access_key:
             raise RuntimeError(
                 f"Could not extract S3 credentials from Supabase API keys: "
                 f"{list(keys_by_name.keys())}"
             )
+
+        await _create_storage_bucket(project_ref, bucket_name, api_secret_access_key)
+
+        # Supabase S3-compatible storage may require dedicated S3 keys that are
+        # distinct from API JWT keys. Allow explicit env overrides when present.
+        access_key_id = os.environ.get(
+            "SUPABASE_S3_ACCESS_KEY_ID", api_access_key_id
+        ).strip()
+        secret_access_key = os.environ.get(
+            "SUPABASE_S3_SECRET_ACCESS_KEY", api_secret_access_key
+        ).strip()
 
         return StorageCredentials(
             endpoint_url=endpoint_url,
@@ -433,20 +482,9 @@ class SupabaseComputeProvider(ComputeProvider):
         await ensure_cli("supabase")
 
     async def login(self) -> None:
-        """Log in to Supabase (delegates to Supabase CLI browser OAuth)."""
+        """Require prior Supabase CLI authentication."""
         await self.ensure_cli_installed()
-        console.print("[bold]Opening browser for Supabase login...[/bold]")
-        proc = await asyncio.create_subprocess_exec(
-            "supabase", "login",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"Supabase login failed (exit {proc.returncode}):\n"
-                f"{stderr.decode().strip()}"
-            )
+        await _require_supabase_login()
 
     def _find_edge_function_dir(self) -> Path:
         """
@@ -519,8 +557,6 @@ class SupabaseComputeProvider(ComputeProvider):
             ]
         )
 
-        import tempfile, os
-
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".env", delete=False
         ) as tmp_env:
@@ -545,23 +581,32 @@ class SupabaseComputeProvider(ComputeProvider):
                 f"(exit {rc}):[/yellow] {stderr.strip()}"
             )
 
-        # Locate the edge function source directory.
+        # Build a temporary Supabase CLI project layout that matches current
+        # expected function path: supabase/functions/<function-name>/index.ts
         edge_fn_dir = self._find_edge_function_dir()
-        console.print(
-            f"[bold]Deploying edge function[/bold] "
-            f"{self._FUNCTION_NAME!r} from {edge_fn_dir} "
-            f"to project {project_ref}"
-        )
+        with tempfile.TemporaryDirectory(prefix="mf-sb-fn-") as staging_dir:
+            staging_root = Path(staging_dir)
+            function_dir = (
+                staging_root / "supabase" / "functions" / self._FUNCTION_NAME
+            )
+            function_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(edge_fn_dir, function_dir, dirs_exist_ok=True)
 
-        rc, stdout, stderr = await _run_async(
-            [
-                "supabase", "functions", "deploy",
-                self._FUNCTION_NAME,
-                "--project-ref", project_ref,
-            ],
-            cwd=str(edge_fn_dir.parent),  # Run from repo root so Supabase CLI
-            # can find the functions/ directory layout.
-        )
+            console.print(
+                f"[bold]Deploying edge function[/bold] "
+                f"{self._FUNCTION_NAME!r} from {function_dir} "
+                f"to project {project_ref}"
+            )
+
+            rc, stdout, stderr = await _run_async(
+                [
+                    "supabase", "functions", "deploy",
+                    self._FUNCTION_NAME,
+                    "--project-ref", project_ref,
+                    "--no-verify-jwt",
+                ],
+                cwd=str(staging_root),
+            )
         if rc != 0:
             raise RuntimeError(
                 f"Failed to deploy Supabase edge function "

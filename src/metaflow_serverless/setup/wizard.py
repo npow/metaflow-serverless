@@ -450,74 +450,18 @@ class SetupWizard:
         """
         Run SQL migrations against the provisioned database.
 
-        For Supabase: uses ``supabase db push --project-ref {ref}`` via the CLI.
-        For all other providers: connects directly with asyncpg and executes
-        schema.sql then procedures.sql.
+        Connects directly with asyncpg and executes schema.sql then
+        procedures.sql.
 
         Returns ``True`` on success.
         """
         console.rule("[bold blue]Running SQL migrations[/bold blue]")
 
-        if db_name == "supabase":
-            await self._run_migrations_supabase(project_name)
-        else:
-            with console.status("[cyan]Running migrations via asyncpg...[/cyan]"):
-                await _run_migrations_asyncpg(db_creds.dsn)
+        with console.status("[cyan]Running migrations via asyncpg...[/cyan]"):
+            await _run_migrations_asyncpg(db_creds.dsn)
 
         console.print("[green]Migrations complete.[/green]")
         return True
-
-    async def _run_migrations_supabase(self, project_name: str) -> None:
-        """Push migrations to Supabase using the CLI."""
-        import asyncio as _asyncio
-        import json as _json
-
-        # Resolve the project ref from the project name.
-        proc = await _asyncio.create_subprocess_exec(
-            "supabase", "projects", "list", "--output", "json",
-            stdout=_asyncio.subprocess.PIPE,
-            stderr=_asyncio.subprocess.PIPE,
-        )
-        stdout_bytes, stderr_bytes = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"Could not list Supabase projects:\n{stderr_bytes.decode().strip()}"
-            )
-        try:
-            projects = _json.loads(stdout_bytes.decode())
-        except _json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"Unexpected output from 'supabase projects list'"
-            ) from exc
-
-        project = next(
-            (p for p in projects if p.get("name") == project_name),
-            projects[-1] if projects else None,
-        )
-        if not project:
-            raise RuntimeError(
-                "No Supabase project found for migration. "
-                "Ensure the database was provisioned first."
-            )
-        project_ref: str = project["id"]
-
-        console.print(
-            f"[cyan]Pushing migrations to Supabase project {project_ref}...[/cyan]"
-        )
-        with console.status("[cyan]Running supabase db push...[/cyan]"):
-            proc = await _asyncio.create_subprocess_exec(
-                "supabase", "db", "push",
-                "--project-ref", project_ref,
-                stdout=_asyncio.subprocess.PIPE,
-                stderr=_asyncio.subprocess.PIPE,
-            )
-            stdout_bytes, stderr_bytes = await proc.communicate()
-
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"supabase db push failed (exit {proc.returncode}):\n"
-                f"{stderr_bytes.decode().strip()}"
-            )
 
     # ------------------------------------------------------------------
     # Config write and summary
@@ -534,6 +478,7 @@ class SetupWizard:
             {
                 "METAFLOW_SERVICE_URL": compute.service_url,
                 "METAFLOW_DEFAULT_METADATA": "service",
+                "METAFLOW_DEFAULT_DATASTORE": "s3",
                 "METAFLOW_DATASTORE_SYSROOT_S3": f"s3://{storage.bucket}/metaflow",
                 "METAFLOW_S3_ENDPOINT_URL": storage.endpoint_url,
                 "AWS_ACCESS_KEY_ID": storage.access_key_id,
@@ -595,5 +540,12 @@ async def _run_migrations_asyncpg(dsn: str) -> None:
     try:
         await conn.execute(load_schema())
         await conn.execute(load_procedures())
+        # PostgREST (used behind Supabase REST endpoints) caches schema.
+        # Reload so newly created RPCs (e.g. create_flow) are immediately visible.
+        try:
+            await conn.execute("NOTIFY pgrst, 'reload schema';")
+        except Exception:
+            # Non-fatal on providers that don't use PostgREST.
+            pass
     finally:
         await conn.close()

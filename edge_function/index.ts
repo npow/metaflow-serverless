@@ -232,8 +232,10 @@ const handleGetFlow: RouteHandler = async (_req, p, _q) => {
 const handleCreateFlow: RouteHandler = async (req, p, _q) => {
   const body = await safeJson(req);
   const res = await pgPost("/rpc/create_flow", {
-    ...body,
-    flow_id: p.flowId,
+    p_user_name: body.user_name ?? body.p_user_name ?? null,
+    p_tags: body.tags ?? body.p_tags ?? [],
+    p_system_tags: body.system_tags ?? body.p_system_tags ?? [],
+    p_flow_id: p.flowId,
   });
   return forwardResponse(res);
 };
@@ -257,8 +259,12 @@ const handleGetRun: RouteHandler = async (_req, p, _q) => {
 const handleCreateRun: RouteHandler = async (req, p, _q) => {
   const body = await safeJson(req);
   const res = await pgPost("/rpc/create_run", {
-    ...body,
-    flow_id: p.flowId,
+    p_run_id: body.run_id ?? body.p_run_id ?? null,
+    p_user_name: body.user_name ?? body.p_user_name ?? null,
+    p_ts_epoch: body.ts_epoch ?? body.p_ts_epoch ?? null,
+    p_tags: body.tags ?? body.p_tags ?? [],
+    p_system_tags: body.system_tags ?? body.p_system_tags ?? [],
+    p_flow_id: p.flowId,
   });
   return forwardResponse(res);
 };
@@ -266,9 +272,9 @@ const handleCreateRun: RouteHandler = async (req, p, _q) => {
 const handleHeartbeatRun: RouteHandler = async (req, p, _q) => {
   const body = await safeJson(req);
   const res = await pgPost("/rpc/heartbeat_run", {
-    ...body,
-    flow_id: p.flowId,
-    run_number: Number(p.runNumber),
+    p_ts: body.ts ?? body.p_ts ?? null,
+    p_flow_id: p.flowId,
+    p_run_id: p.runNumber,
   });
   return forwardResponse(res);
 };
@@ -276,9 +282,10 @@ const handleHeartbeatRun: RouteHandler = async (req, p, _q) => {
 const handleMutateRunTags: RouteHandler = async (req, p, _q) => {
   const body = await safeJson(req);
   const res = await pgPost("/rpc/mutate_run_tags", {
-    ...body,
-    flow_id: p.flowId,
-    run_number: Number(p.runNumber),
+    p_tags_to_add: body.tags_to_add ?? body.p_tags_to_add ?? [],
+    p_tags_to_remove: body.tags_to_remove ?? body.p_tags_to_remove ?? [],
+    p_flow_id: p.flowId,
+    p_run_id: p.runNumber,
   });
   return forwardResponse(res);
 };
@@ -311,10 +318,13 @@ const handleGetStep: RouteHandler = async (_req, p, _q) => {
 const handleCreateStep: RouteHandler = async (req, p, _q) => {
   const body = await safeJson(req);
   const res = await pgPost("/rpc/create_step", {
-    ...body,
-    flow_id: p.flowId,
-    run_number: Number(p.runNumber),
-    step_name: p.stepName,
+    p_user_name: body.user_name ?? body.p_user_name ?? null,
+    p_ts_epoch: body.ts_epoch ?? body.p_ts_epoch ?? null,
+    p_tags: body.tags ?? body.p_tags ?? [],
+    p_system_tags: body.system_tags ?? body.p_system_tags ?? [],
+    p_flow_id: p.flowId,
+    p_run_id: p.runNumber,
+    p_step_name: p.stepName,
   });
   return forwardResponse(res);
 };
@@ -338,10 +348,16 @@ const handleGetTask: RouteHandler = async (_req, p, _q) => {
 const handleCreateTask: RouteHandler = async (req, p, _q) => {
   const body = await safeJson(req);
   const res = await pgPost("/rpc/create_task", {
-    ...body,
-    flow_id: p.flowId,
-    run_number: Number(p.runNumber),
-    step_name: p.stepName,
+    p_task_name: String(
+      body.task_id ?? body.task_name ?? body.p_task_name ?? p.taskId ?? "0",
+    ),
+    p_user_name: body.user_name ?? body.p_user_name ?? null,
+    p_ts_epoch: body.ts_epoch ?? body.p_ts_epoch ?? null,
+    p_tags: body.tags ?? body.p_tags ?? [],
+    p_system_tags: body.system_tags ?? body.p_system_tags ?? [],
+    p_flow_id: p.flowId,
+    p_run_id: p.runNumber,
+    p_step_name: p.stepName,
   });
   return forwardResponse(res);
 };
@@ -349,11 +365,11 @@ const handleCreateTask: RouteHandler = async (req, p, _q) => {
 const handleHeartbeatTask: RouteHandler = async (req, p, _q) => {
   const body = await safeJson(req);
   const res = await pgPost("/rpc/heartbeat_task", {
-    ...body,
-    flow_id: p.flowId,
-    run_number: Number(p.runNumber),
-    step_name: p.stepName,
-    task_id: Number(p.taskId),
+    p_ts: body.ts ?? body.p_ts ?? null,
+    p_flow_id: p.flowId,
+    p_run_id: p.runNumber,
+    p_step_name: p.stepName,
+    p_task_id: p.taskId,
   });
   return forwardResponse(res);
 };
@@ -387,10 +403,10 @@ const handleCreateTaskMetadata: RouteHandler = async (req, p, _q) => {
 const handleGetTaskArtifacts: RouteHandler = async (_req, p, _q) => {
   // Use RPC to get latest artifacts per name for this task.
   const res = await pgPost("/rpc/get_artifacts_latest", {
-    flow_id: p.flowId,
-    run_number: Number(p.runNumber),
-    step_name: p.stepName,
-    task_id: Number(p.taskId),
+    p_flow_id: p.flowId,
+    p_run_id: p.runNumber,
+    p_step_name: p.stepName,
+    p_task_id: p.taskId,
   });
   return forwardResponse(res);
 };
@@ -429,11 +445,11 @@ const handleFilteredTasks: RouteHandler = async (_req, p, q) => {
   const metadataFieldName = q.get("metadata_field_name") ?? "";
   const pattern = q.get("pattern") ?? "";
   const res = await pgPost("/rpc/filter_tasks_by_metadata", {
-    flow_id: p.flowId,
-    run_number: Number(p.runNumber),
-    step_name: p.stepName,
-    metadata_field_name: metadataFieldName,
-    pattern,
+    p_flow_id: p.flowId,
+    p_run_id: p.runNumber,
+    p_step_name: p.stepName,
+    p_field_name: metadataFieldName,
+    p_pattern: pattern,
   });
   return forwardResponse(res);
 };

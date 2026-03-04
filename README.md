@@ -21,7 +21,7 @@ mf-setup
 python flow.py run
 ```
 
-`mf-setup` opens your browser for a one-time login, provisions everything on free-tier serverless infrastructure, and writes `~/.metaflowconfig`. No cloud account setup required beyond a free Supabase account.
+`mf-setup` provisions everything on free-tier serverless infrastructure and writes Metaflow config to `~/.metaflowconfig/config.json`. Authenticate first with `supabase login`.
 
 ## Install
 
@@ -43,7 +43,47 @@ pip install metaflow
 mf-setup
 ```
 
-Walks you through choosing a provider stack, installs any needed CLIs, authenticates via browser OAuth, and provisions the database, storage, and compute layer. Writes credentials to `~/.metaflowconfig`.
+Walks you through choosing a provider stack, installs any needed CLIs, and provisions the database, storage, and compute layer. Writes credentials to `~/.metaflowconfig/config.json`.
+
+### Supabase auth and config (important)
+
+Authenticate the Supabase CLI before running setup:
+
+```bash
+supabase login
+supabase projects list --output json
+```
+
+Then run:
+
+```bash
+mf-setup
+```
+
+The wizard writes Metaflow global config to:
+
+```text
+~/.metaflowconfig/config.json
+```
+
+### Supabase CLI v2 notes
+
+- The setup flow is compatible with recent Supabase CLI versions where:
+  - `supabase db url --project-ref ...` is removed.
+  - `supabase storage create ... --project-ref ...` is removed.
+- Migrations are applied directly via `asyncpg` and trigger a PostgREST schema reload.
+- Edge function deploy uses a temporary `supabase/functions/<name>/` staging layout required by current CLI packaging.
+
+### Supabase S3 credentials
+
+Supabase API keys are not always valid S3 credentials for object writes.
+If your flow fails with S3 auth errors (`InvalidAccessKeyId` / access denied), provide explicit S3 keys:
+
+```bash
+export SUPABASE_S3_ACCESS_KEY_ID=...
+export SUPABASE_S3_SECRET_ACCESS_KEY=...
+mf-setup
+```
 
 ### Run a flow
 

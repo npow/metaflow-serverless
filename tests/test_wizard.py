@@ -87,7 +87,7 @@ class TestWizardWritesConfig:
         assert storage_creds.bucket in data["METAFLOW_DATASTORE_SYSROOT_S3"]
 
     async def test_wizard_write_config_sets_default_metadata(self, tmp_path):
-        """_write_config sets METAFLOW_DEFAULT_METADATA to 'service'."""
+        """_write_config sets default metadata and datastore settings."""
         from metaflow_serverless.setup.wizard import SetupWizard
 
         cfg_path = tmp_path / ".metaflowconfig"
@@ -95,13 +95,13 @@ class TestWizardWritesConfig:
         wizard._write_config(_make_db_creds(), _make_storage_creds(), _make_compute_creds())
         data = json.loads(cfg_path.read_text())
         assert data.get("METAFLOW_DEFAULT_METADATA") == "service"
+        assert data.get("METAFLOW_DEFAULT_DATASTORE") == "s3"
 
 
 class TestWizardMigrationsAsyncpg:
     async def test_wizard_runs_migrations_asyncpg(self, tmp_path):
         """
-        When db_name is not 'supabase', _run_migrations_asyncpg is called
-        with the db DSN.
+        _run_migrations_asyncpg is called with the db DSN.
         """
         from metaflow_serverless.setup.wizard import SetupWizard, _run_migrations_asyncpg
 
@@ -132,31 +132,25 @@ class TestWizardMigrationsAsyncpg:
             await _run_migrations_asyncpg("postgresql://user:pass@host:5432/db")
 
         mock_connect.assert_awaited_once_with("postgresql://user:pass@host:5432/db")
-        # execute should be called twice: once for schema, once for procedures
-        assert mock_conn.execute.await_count == 2
+        # execute is called for schema, procedures, and PostgREST schema reload.
+        assert mock_conn.execute.await_count == 3
         mock_conn.close.assert_awaited_once()
 
-    async def test_wizard_migrations_supabase_path(self, tmp_path):
-        """When db_name is 'supabase', the supabase migration path is taken."""
+    async def test_wizard_migrations_supabase_uses_asyncpg(self, tmp_path):
+        """Supabase migrations also run through asyncpg."""
         from metaflow_serverless.setup.wizard import SetupWizard
 
         cfg_path = tmp_path / ".metaflowconfig"
         wizard = SetupWizard(config_path=str(cfg_path))
         db_creds = _make_db_creds()
 
-        with patch.object(
-            wizard,
-            "_run_migrations_supabase",
+        with patch(
+            "metaflow_serverless.setup.wizard._run_migrations_asyncpg",
             new_callable=AsyncMock,
-        ) as mock_supa_migrate:
-            with patch(
-                "metaflow_serverless.setup.wizard._run_migrations_asyncpg",
-                new_callable=AsyncMock,
-            ) as mock_asyncpg:
-                await wizard._run_migrations("supabase", db_creds, "testproject")
+        ) as mock_asyncpg:
+            await wizard._run_migrations("supabase", db_creds, "testproject")
 
-            mock_supa_migrate.assert_awaited_once_with("testproject")
-            mock_asyncpg.assert_not_awaited()
+        mock_asyncpg.assert_awaited_once_with(db_creds.dsn)
 
 
 class TestCompatibleStorageFiltered:

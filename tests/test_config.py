@@ -81,6 +81,22 @@ class TestMetaflowConfig:
         cfg = MetaflowConfig(path=path)
         assert cfg.read() == {}
 
+    def test_default_path_uses_config_json(self, tmp_home):
+        """Default path points to ~/.metaflowconfig/config.json."""
+        cfg = MetaflowConfig()
+        assert str(cfg.path).endswith("/.metaflowconfig/config.json")
+
+    def test_directory_path_resolves_to_config_json(self, tmp_path):
+        """Passing a directory path writes config.json inside it."""
+        cfg_dir = tmp_path / ".metaflowconfig"
+        cfg_dir.mkdir()
+        cfg = MetaflowConfig(path=cfg_dir)
+        cfg.write({"FOO": "bar"})
+        cfg_file = cfg_dir / "config.json"
+        assert cfg_file.exists()
+        data = json.loads(cfg_file.read_text())
+        assert data["FOO"] == "bar"
+
 
 class TestStackConfig:
     """Tests for StackConfig.validate()."""
