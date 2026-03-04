@@ -139,9 +139,15 @@ All business logic lives in the database as stored procedures. The compute layer
 - The Edge Function handles HTTP routing and request shaping; metadata behavior lives in SQL procedures in Postgres.
 - With `compute=cloud-run` or `compute=render`, `mf-setup` deploys the `netflixoss/metaflow-metadata-service` container image.
 
-### Remote sandbox note (Daytona/E2B)
+### Comparison: `metaflow-serverless` vs `metaflow-local-service`
 
-`metaflow-local-service` is useful for local development but is not equivalent to a remote service backend for remote sandboxes. For end-to-end remote observability (heartbeats and shared metadata visibility), validate against a real remote service URL (for example, Supabase `metadata-router`).
+| Dimension | `metaflow-serverless` | `metaflow-local-service` |
+|---|---|---|
+| Backend | Remote service (Supabase/Cloud Run/Render + Postgres) | Local daemon on `127.0.0.1` backed by `.metaflow/` |
+| Cross-machine visibility | Yes | No (single machine by default) |
+| Heartbeat tracking | Persisted in remote DB | In-memory daemon liveness only |
+| Best use case | Shared/dev-prod-like metadata backend | Fast local iteration and CI |
+| Remote Daytona/E2B observability | Recommended for end-to-end validation | Not equivalent to a shared remote backend |
 
 ## Provider stacks
 
