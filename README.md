@@ -133,6 +133,16 @@ Metaflow client
 
 All business logic lives in the database as stored procedures. The compute layer scales to zero and wakes in milliseconds. Artifacts are stored in S3-compatible object storage.
 
+### Compute mode details
+
+- With `compute=supabase`, `mf-setup` deploys a Supabase Edge Function named `metadata-router` (not the `netflixoss/metaflow-metadata-service` container image).
+- The Edge Function handles HTTP routing and request shaping; metadata behavior lives in SQL procedures in Postgres.
+- With `compute=cloud-run` or `compute=render`, `mf-setup` deploys the `netflixoss/metaflow-metadata-service` container image.
+
+### Remote sandbox note (Daytona/E2B)
+
+`metaflow-local-service` is useful for local development but is not equivalent to a remote service backend for remote sandboxes. For end-to-end remote observability (heartbeats and shared metadata visibility), validate against a real remote service URL (for example, Supabase `metadata-router`).
+
 ## Provider stacks
 
 | Stack | Accounts needed | Cold start | Storage |
