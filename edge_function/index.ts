@@ -1,12 +1,11 @@
-import { createClient } from "@supabase/supabase-js";
-
 // ---------------------------------------------------------------------------
 // Environment
 // ---------------------------------------------------------------------------
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-const REQUIRE_AUTH = Deno.env.get("REQUIRE_AUTH") === "true";
+const SERVICE_AUTH_KEY = Deno.env.get("METAFLOW_SERVICE_AUTH_KEY") ?? "";
+const REQUIRE_AUTH = Deno.env.get("REQUIRE_AUTH") !== "false";
 
 const POSTGREST_BASE = `${SUPABASE_URL}/rest/v1`;
 
@@ -17,7 +16,7 @@ const POSTGREST_BASE = `${SUPABASE_URL}/rest/v1`;
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Authorization, Content-Type, apikey, x-client-info",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type, apikey, x-api-key, x-client-info",
 };
 
 function corsResponse(status = 204): Response {
@@ -177,18 +176,9 @@ async function forwardSingle(res: Response): Promise<Response> {
 
 async function validateAuth(req: Request): Promise<boolean> {
   if (!REQUIRE_AUTH) return true;
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) return false;
-  const token = authHeader.slice(7);
-  try {
-    const client = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-      auth: { persistSession: false },
-    });
-    const { error } = await client.auth.getUser(token);
-    return !error;
-  } catch {
-    return false;
-  }
+  if (!SERVICE_AUTH_KEY) return false;
+  const provided = req.headers.get("x-api-key");
+  return typeof provided === "string" && provided.length > 0 && provided === SERVICE_AUTH_KEY;
 }
 
 // ---------------------------------------------------------------------------
@@ -347,10 +337,20 @@ const handleGetTask: RouteHandler = async (_req, p, _q) => {
 
 const handleCreateTask: RouteHandler = async (req, p, _q) => {
   const body = await safeJson(req);
+  const requestedTaskName =
+    body.task_name ??
+    body.p_task_name ??
+    body.task_id ??
+    body.p_task_id ??
+    p.taskId ??
+    null;
+  // Metaflow's /task call may omit task_name. If we always default to "0",
+  // foreach fanout collides on tasks_v3_unique_name. Use a unique fallback.
+  const taskName = requestedTaskName === null || requestedTaskName === undefined
+    ? `auto-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
+    : String(requestedTaskName);
   const res = await pgPost("/rpc/create_task", {
-    p_task_name: String(
-      body.task_id ?? body.task_name ?? body.p_task_name ?? p.taskId ?? "0",
-    ),
+    p_task_name: taskName,
     p_user_name: body.user_name ?? body.p_user_name ?? null,
     p_ts_epoch: body.ts_epoch ?? body.p_ts_epoch ?? null,
     p_tags: body.tags ?? body.p_tags ?? [],

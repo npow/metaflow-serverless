@@ -97,6 +97,20 @@ class TestWizardWritesConfig:
         assert data.get("METAFLOW_DEFAULT_METADATA") == "service"
         assert data.get("METAFLOW_DEFAULT_DATASTORE") == "s3"
 
+    async def test_wizard_write_config_sets_service_auth_key(self, tmp_path):
+        """_write_config writes METAFLOW_SERVICE_AUTH_KEY when provided."""
+        from metaflow_serverless.setup.wizard import SetupWizard
+
+        cfg_path = tmp_path / ".metaflowconfig"
+        wizard = SetupWizard(config_path=str(cfg_path))
+        wizard._write_config(
+            _make_db_creds(),
+            _make_storage_creds(),
+            _make_compute_creds(service_auth_key="svc-key-1"),
+        )
+        data = json.loads(cfg_path.read_text())
+        assert data.get("METAFLOW_SERVICE_AUTH_KEY") == "svc-key-1"
+
 
 class TestWizardMigrationsAsyncpg:
     async def test_wizard_runs_migrations_asyncpg(self, tmp_path):

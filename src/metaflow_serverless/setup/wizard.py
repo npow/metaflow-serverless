@@ -193,7 +193,7 @@ class SetupWizard:
         # ---- Provision storage ---------------------------------------------
         storage_creds = await self._run_step(
             "storage",
-            self._provision_storage(stack.storage, project_name),
+            self._provision_storage(stack.storage, project_name, db_creds=db_creds),
         )
         if storage_creds is None:
             return
@@ -395,6 +395,7 @@ class SetupWizard:
         self,
         storage_name: str,
         project_name: str,
+        db_creds: DatabaseCredentials | None = None,
     ) -> StorageCredentials:
         console.rule("[bold blue]Storage provisioning[/bold blue]")
         provider = get_storage_provider(storage_name)
@@ -404,6 +405,11 @@ class SetupWizard:
 
         console.print(f"[cyan]Logging in to {provider.display_name}...[/cyan]")
         await provider.login()
+
+        # Give the Supabase storage provider access to the DB so it can register
+        # proper S3 credentials in storage.s3_credentials (JWT tokens don't work).
+        if db_creds is not None and hasattr(provider, "set_db_dsn"):
+            provider.set_db_dsn(db_creds.dsn)
 
         bucket_name = f"metaflow-{project_name.lower().replace('_', '-')}"[:63]
         with console.status(f"[cyan]Provisioning bucket {bucket_name!r}...[/cyan]"):
@@ -474,17 +480,19 @@ class SetupWizard:
         compute: ComputeCredentials,
     ) -> None:
         """Merge all provisioned credentials into ~/.metaflowconfig."""
-        self._config.write(
-            {
-                "METAFLOW_SERVICE_URL": compute.service_url,
-                "METAFLOW_DEFAULT_METADATA": "service",
-                "METAFLOW_DEFAULT_DATASTORE": "s3",
-                "METAFLOW_DATASTORE_SYSROOT_S3": f"s3://{storage.bucket}/metaflow",
-                "METAFLOW_S3_ENDPOINT_URL": storage.endpoint_url,
-                "AWS_ACCESS_KEY_ID": storage.access_key_id,
-                "AWS_SECRET_ACCESS_KEY": storage.secret_access_key,
-            }
-        )
+        config_data = {
+            "METAFLOW_SERVICE_URL": compute.service_url,
+            "METAFLOW_DEFAULT_METADATA": "service",
+            "METAFLOW_DEFAULT_DATASTORE": "s3",
+            "METAFLOW_DATASTORE_SYSROOT_S3": f"s3://{storage.bucket}/metaflow",
+            "METAFLOW_S3_ENDPOINT_URL": storage.endpoint_url,
+            "AWS_ACCESS_KEY_ID": storage.access_key_id,
+            "AWS_SECRET_ACCESS_KEY": storage.secret_access_key,
+        }
+        if compute.service_auth_key:
+            config_data["METAFLOW_SERVICE_AUTH_KEY"] = compute.service_auth_key
+
+        self._config.write(config_data)
         console.print(
             f"\n[green]Configuration written to[/green] {self._config.path}"
         )

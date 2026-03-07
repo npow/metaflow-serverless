@@ -17,7 +17,11 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+from functools import lru_cache
 import mimetypes
+import json
+import os
+import re
 import shutil
 import sys
 import tarfile
@@ -25,6 +29,7 @@ import tempfile
 import webbrowser
 import zipfile
 from pathlib import Path
+import time
 from typing import Any
 
 import aiohttp
@@ -49,6 +54,7 @@ _HOP_BY_HOP = frozenset({
     "proxy-authorization", "te", "trailers", "transfer-encoding",
     "upgrade", "host",
 })
+_RUNS_PATH_RE = re.compile(r"^/flows/[^/]+/runs(?:/[^/]+)?$")
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +79,8 @@ async def run_proxy(port: int = 8083) -> None:
     """
     config = MetaflowConfig()
     service_url = config.get_service_url()
+    service_auth_key = config.get_service_auth_key()
+    datastore_config = config.get_datastore_config()
 
     if not service_url:
         console.print(
@@ -90,7 +98,12 @@ async def run_proxy(port: int = 8083) -> None:
     ui_dir = await _ensure_ui_assets()
     console.print(f"[cyan]Serving UI assets from:[/cyan] {ui_dir}")
 
-    app = _build_app(service_url=service_url, ui_dir=ui_dir)
+    app = _build_app(
+        service_url=service_url,
+        ui_dir=ui_dir,
+        service_auth_key=service_auth_key,
+        datastore_config=datastore_config,
+    )
 
     runner = web.AppRunner(app)
     await runner.setup()
@@ -132,7 +145,12 @@ async def _open_browser_after_delay(url: str, delay: float = 1.0) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _build_app(service_url: str, ui_dir: Path) -> web.Application:
+def _build_app(
+    service_url: str,
+    ui_dir: Path,
+    service_auth_key: str | None = None,
+    datastore_config: dict[str, Any] | None = None,
+) -> web.Application:
     """
     Construct the aiohttp Application with all routes configured.
 
@@ -141,11 +159,20 @@ def _build_app(service_url: str, ui_dir: Path) -> web.Application:
         ANY /api/{path:.*}    ->  proxy to upstream metadata service
         GET /{path:.*}        ->  serve static UI files (SPA fallback)
     """
-    app = web.Application()
+    @web.middleware
+    async def _log_middleware(request: web.Request, handler):
+        resp = await handler(request)
+        if request.path.startswith("/api"):
+            console.print(f"[dim]{request.method} {request.path_qs} → {resp.status}[/dim]")
+        return resp
+
+    app = web.Application(middlewares=[_log_middleware])
 
     # Store shared state in the app.
     app["service_url"] = service_url
     app["ui_dir"] = ui_dir
+    app["service_auth_key"] = service_auth_key
+    app["datastore_config"] = datastore_config or {}
 
     # Lifecycle hooks.
     app.on_startup.append(_create_http_session)
@@ -153,6 +180,32 @@ def _build_app(service_url: str, ui_dir: Path) -> web.Application:
 
     # Routes — order matters: more specific first.
     app.router.add_get("/ws", _ws_handler)
+    app.router.add_get("/api/ws", _ws_handler)
+    app.router.add_get("/api/runs", _runs_compat_handler)
+    app.router.add_get("/api/flows/{flow_id}/runs/autocomplete", _runs_autocomplete_handler)
+    app.router.add_get("/api/flows/{flow_id}/runs/{run_id}/parameters", _run_parameters_handler)
+    app.router.add_get("/api/flows/{flow_id}/runs/{run_id}/tasks", _run_tasks_handler)
+    app.router.add_get("/api/flows/{flow_id}/runs/{run_id}/dag", _run_dag_handler)
+    app.router.add_get(
+        "/api/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks/{task_id}/attempts",
+        _task_attempts_handler,
+    )
+    app.router.add_get(
+        "/api/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks/{task_id}",
+        _task_detail_handler,
+    )
+    app.router.add_get(
+        "/api/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks/{task_id}/metadata",
+        _task_metadata_handler,
+    )
+    app.router.add_get(
+        "/api/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks/{task_id}/logs/{stream}",
+        _task_logs_handler,
+    )
+    app.router.add_get("/api/features", _features_handler)
+    app.router.add_get("/api/plugin", _plugin_handler)
+    app.router.add_get("/api/notifications", _notifications_handler)
+    app.router.add_get("/api/links", _links_handler)
     app.router.add_route("*", "/api/{path_tail:.*}", _proxy_handler)
     app.router.add_get("/{path:.*}", _static_handler)
 
@@ -189,6 +242,7 @@ async def _proxy_handler(request: web.Request) -> web.Response:
     """
     session: aiohttp.ClientSession = request.app["session"]
     service_url: str = request.app["service_url"]
+    service_auth_key: str | None = request.app.get("service_auth_key")
 
     path_tail: str = request.match_info.get("path_tail", "")
     if not path_tail.startswith("/"):
@@ -203,6 +257,8 @@ async def _proxy_handler(request: web.Request) -> web.Response:
         k: v for k, v in request.headers.items()
         if k.lower() not in _HOP_BY_HOP
     }
+    if service_auth_key:
+        forward_headers["x-api-key"] = service_auth_key
 
     body = await request.read()
 
@@ -216,10 +272,25 @@ async def _proxy_handler(request: web.Request) -> web.Response:
             timeout=aiohttp.ClientTimeout(total=30),
         ) as upstream_resp:
             resp_body = await upstream_resp.read()
+            path_for_norm = path_tail.split("?", 1)[0]
+            if upstream_resp.status == 200 and _RUNS_PATH_RE.match(path_for_norm):
+                resp_body = _normalize_runs_payload(resp_body)
+                resp_body = _wrap_data_payload(resp_body)
+            if upstream_resp.status == 200 and (
+                path_for_norm.endswith("/metadata")
+                or path_for_norm.endswith("/artifacts")
+                or path_for_norm.endswith("/steps")
+                or path_for_norm.endswith("/tasks")
+            ):
+                resp_body = _wrap_data_payload(resp_body)
             response_headers = {
                 k: v for k, v in upstream_resp.headers.items()
                 if k.lower() not in _HOP_BY_HOP
             }
+            # aiohttp may decode gzip/brotli transparently; avoid mismatched
+            # content-encoding/content-length on forwarded bodies.
+            response_headers.pop("Content-Encoding", None)
+            response_headers.pop("Content-Length", None)
             # Add CORS headers so the browser UI can communicate with the proxy.
             response_headers["Access-Control-Allow-Origin"] = "*"
             response_headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
@@ -275,6 +346,1026 @@ async def _static_handler(request: web.Request) -> web.Response:
     )
 
 
+async def _features_handler(_request: web.Request) -> web.Response:
+    return web.json_response({})
+
+
+async def _plugin_handler(_request: web.Request) -> web.Response:
+    return web.json_response([])
+
+
+async def _notifications_handler(_request: web.Request) -> web.Response:
+    return web.json_response([])
+
+
+async def _links_handler(_request: web.Request) -> web.Response:
+    return web.json_response([])
+
+
+async def _runs_compat_handler(request: web.Request) -> web.Response:
+    """
+    Compatibility endpoint for Metaflow UI's global /api/runs call.
+
+    Aggregates runs across all flows from the metadata service and returns them
+    sorted by ts_epoch descending.
+    """
+    session: aiohttp.ClientSession = request.app["session"]
+    service_url: str = request.app["service_url"]
+    service_auth_key: str | None = request.app.get("service_auth_key")
+    headers = {"x-api-key": service_auth_key} if service_auth_key else None
+
+    runs: list[dict[str, Any]] = []
+    try:
+        async with session.get(
+            f"{service_url}/flows",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status != 200:
+                return web.json_response([])
+            flows_data: Any = await resp.json()
+    except Exception:
+        return web.json_response([])
+
+    flows = flows_data.get("data", flows_data) if isinstance(flows_data, dict) else flows_data
+    if not isinstance(flows, list):
+        return web.json_response([])
+
+    for flow in flows:
+        flow_id = flow.get("flow_id") or flow.get("id")
+        if not flow_id:
+            continue
+        try:
+            async with session.get(
+                f"{service_url}/flows/{flow_id}/runs",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status != 200:
+                    continue
+                data: Any = await resp.json()
+            flow_runs = data.get("data", data) if isinstance(data, dict) else data
+            if isinstance(flow_runs, list):
+                for run in flow_runs:
+                    if isinstance(run, dict):
+                        if run.get("run_id") is None and run.get("run_number") is not None:
+                            run["run_id"] = str(run.get("run_number"))
+                        if "user" not in run and run.get("user_name") is not None:
+                            run["user"] = run.get("user_name")
+                        if "status" not in run:
+                            run["status"] = _infer_run_status(run)
+                runs.extend(flow_runs)
+        except Exception:
+            continue
+
+    runs.sort(key=lambda r: _safe_ts(r.get("ts_epoch")), reverse=True)
+
+    # Respect common pagination controls used by the UI.
+    limit_param = request.query.get("_limit")
+    page_param = request.query.get("_page")
+    try:
+        limit = int(limit_param) if limit_param else 30
+    except ValueError:
+        limit = 30
+    try:
+        page = int(page_param) if page_param else 1
+    except ValueError:
+        page = 1
+    page = max(page, 1)
+    limit = max(limit, 1)
+    start = (page - 1) * limit
+    end = start + limit
+
+    payload = {
+        "data": runs[start:end],
+        "total_count": len(runs),
+        "time": int(time.time() * 1000),
+    }
+    return web.json_response(payload)
+
+
+async def _runs_autocomplete_handler(request: web.Request) -> web.Response:
+    """
+    Compatibility endpoint for /api/flows/<flow>/runs/autocomplete.
+    """
+    session: aiohttp.ClientSession = request.app["session"]
+    service_url: str = request.app["service_url"]
+    service_auth_key: str | None = request.app.get("service_auth_key")
+    headers = {"x-api-key": service_auth_key} if service_auth_key else None
+    flow_id = request.match_info.get("flow_id", "")
+
+    try:
+        async with session.get(
+            f"{service_url}/flows/{flow_id}/runs",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status != 200:
+                return web.json_response([])
+            data: Any = await resp.json()
+    except Exception:
+        return web.json_response([])
+
+    runs = data.get("data", data) if isinstance(data, dict) else data
+    if not isinstance(runs, list):
+        return web.json_response([])
+
+    needle = (
+        request.query.get("run:co")
+        or request.query.get("run")
+        or request.query.get("q")
+        or ""
+    )
+    needle = str(needle).strip()
+
+    out: list[dict[str, Any]] = []
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        run_number = run.get("run_number")
+        run_id = run.get("run_id")
+        run_id_value = str(run_id) if run_id is not None else (
+            str(run_number) if run_number is not None else ""
+        )
+        if needle and needle not in run_id_value:
+            continue
+        if run.get("run_id") is None and run_number is not None:
+            run = dict(run)
+            run["run_id"] = str(run_number)
+        if "user" not in run and run.get("user_name") is not None:
+            run["user"] = run.get("user_name")
+        if "status" not in run:
+            run["status"] = _infer_run_status(run)
+        out.append(run)
+
+    out.sort(key=lambda r: _safe_ts(r.get("ts_epoch")), reverse=True)
+    limit = request.query.get("_limit")
+    try:
+        n = int(limit) if limit else 20
+    except ValueError:
+        n = 20
+    return web.json_response(out[: max(n, 1)])
+
+
+async def _run_parameters_handler(request: web.Request) -> web.Response:
+    """
+    Compatibility endpoint for /api/flows/<flow>/runs/<run>/parameters.
+    """
+    session: aiohttp.ClientSession = request.app["session"]
+    service_url: str = request.app["service_url"]
+    service_auth_key: str | None = request.app.get("service_auth_key")
+    headers = {"x-api-key": service_auth_key} if service_auth_key else None
+    flow_id = request.match_info.get("flow_id", "")
+    run_id = request.match_info.get("run_id", "")
+
+    params: dict[str, Any] = {}
+    try:
+        async with session.get(
+            f"{service_url}/flows/{flow_id}/runs/{run_id}/metadata",
+            params={"step_name": "_parameters"},
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status == 200:
+                data: Any = await resp.json()
+                entries = data.get("data", data) if isinstance(data, dict) else data
+                if isinstance(entries, list):
+                    for item in entries:
+                        if not isinstance(item, dict):
+                            continue
+                        field = item.get("field_name")
+                        value = item.get("value")
+                        if isinstance(field, str) and field.startswith("parameter_"):
+                            params[field] = {"value": value}
+    except Exception:
+        pass
+
+    return web.json_response({"data": params, "links": {"next": None}})
+
+
+async def _run_tasks_handler(request: web.Request) -> web.Response:
+    """
+    Compatibility endpoint for /api/flows/<flow>/runs/<run>/tasks.
+    """
+    session: aiohttp.ClientSession = request.app["session"]
+    service_url: str = request.app["service_url"]
+    service_auth_key: str | None = request.app.get("service_auth_key")
+    headers = {"x-api-key": service_auth_key} if service_auth_key else None
+    flow_id = request.match_info.get("flow_id", "")
+    run_id = request.match_info.get("run_id", "")
+
+    # Fetch run-level metadata once to extract attempt-done timestamps for the timeline.
+    task_finished_at: dict[int, int] = {}
+    try:
+        async with session.get(
+            f"{service_url}/flows/{flow_id}/runs/{run_id}/metadata",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status == 200:
+                raw: Any = await resp.json()
+                entries = raw if isinstance(raw, list) else raw.get("data", [])
+                if isinstance(entries, list):
+                    for entry in entries:
+                        if entry.get("field_name") == "attempt-done":
+                            tid = entry.get("task_id")
+                            ts = entry.get("ts_epoch")
+                            if tid is not None and ts is not None:
+                                task_finished_at[int(tid)] = int(ts)
+    except Exception:
+        pass
+
+    all_tasks: list[dict[str, Any]] = []
+    try:
+        async with session.get(
+            f"{service_url}/flows/{flow_id}/runs/{run_id}/steps",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status != 200:
+                return web.json_response({"data": [], "links": {"next": None}})
+            steps_data: Any = await resp.json()
+    except Exception:
+        return web.json_response({"data": [], "links": {"next": None}})
+
+    steps = steps_data.get("data", steps_data) if isinstance(steps_data, dict) else steps_data
+    if not isinstance(steps, list):
+        return web.json_response({"data": [], "links": {"next": None}})
+
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        step_name = step.get("step_name")
+        if not step_name:
+            continue
+        try:
+            async with session.get(
+                f"{service_url}/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status != 200:
+                    continue
+                tasks_data: Any = await resp.json()
+            tasks = tasks_data.get("data", tasks_data) if isinstance(tasks_data, dict) else tasks_data
+            if isinstance(tasks, list):
+                for task in tasks:
+                    if not isinstance(task, dict):
+                        continue
+                    enriched = dict(task)
+                    if enriched.get("run_id") is None:
+                        enriched["run_id"] = str(run_id)
+                    if "user" not in enriched and enriched.get("user_name") is not None:
+                        enriched["user"] = enriched.get("user_name")
+                    if "status" not in enriched or not enriched.get("status"):
+                        enriched["status"] = await _infer_task_status(
+                            session=session,
+                            service_url=service_url,
+                            headers=headers,
+                            flow_id=flow_id,
+                            run_id=str(run_id),
+                            step_name=str(step_name),
+                            task=enriched,
+                        )
+                    # Populate timeline fields.
+                    started_at = enriched.get("ts_epoch")
+                    task_id_int = enriched.get("task_id")
+                    finished_at = task_finished_at.get(task_id_int) if task_id_int is not None else None
+                    if "started_at" not in enriched:
+                        enriched["started_at"] = started_at
+                    if "finished_at" not in enriched:
+                        enriched["finished_at"] = finished_at
+                    if "duration" not in enriched:
+                        s = enriched.get("started_at")
+                        f = enriched.get("finished_at")
+                        enriched["duration"] = (f - s) if (s and f) else None
+                    if "attempt_id" not in enriched:
+                        enriched["attempt_id"] = 0
+                    all_tasks.append(enriched)
+        except Exception:
+            continue
+
+    all_tasks.sort(key=lambda t: _safe_ts(t.get("ts_epoch")))
+    return web.json_response({"data": all_tasks, "links": {"next": None}})
+
+
+async def _run_dag_handler(request: web.Request) -> web.Response:
+    """
+    Compatibility endpoint for /api/flows/<flow>/runs/<run>/dag.
+    """
+    session: aiohttp.ClientSession = request.app["session"]
+    service_url: str = request.app["service_url"]
+    service_auth_key: str | None = request.app.get("service_auth_key")
+    headers = {"x-api-key": service_auth_key} if service_auth_key else None
+    flow_id = request.match_info.get("flow_id", "")
+    run_id = request.match_info.get("run_id", "")
+
+    # First try native endpoint if upstream supports it.
+    try:
+        async with session.get(
+            f"{service_url}/flows/{flow_id}/runs/{run_id}/dag",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status == 200:
+                data: Any = await resp.json()
+                dag = data.get("data", data) if isinstance(data, dict) else data
+                if isinstance(dag, dict) and dag:
+                    return web.json_response({"data": dag, "links": {"next": None}})
+    except Exception:
+        pass
+
+    # Synthesize a minimal DAG from step names if /dag is unavailable.
+    try:
+        async with session.get(
+            f"{service_url}/flows/{flow_id}/runs/{run_id}/steps",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status != 200:
+                return web.json_response({"data": {}, "links": {"next": None}})
+            steps_data: Any = await resp.json()
+    except Exception:
+        return web.json_response({"data": {}, "links": {"next": None}})
+
+    steps = steps_data.get("data", steps_data) if isinstance(steps_data, dict) else steps_data
+    if not isinstance(steps, list):
+        return web.json_response({"data": {}, "links": {"next": None}})
+
+    logical_steps = [
+        s for s in steps
+        if isinstance(s, dict) and s.get("step_name") and s.get("step_name") != "_parameters"
+    ]
+    logical_steps.sort(key=lambda s: _safe_ts(s.get("ts_epoch")))
+    ordered_names = [str(s["step_name"]) for s in logical_steps]
+    if not ordered_names:
+        return web.json_response({"data": {}, "links": {"next": None}})
+
+    # Fetch task counts per step in parallel to infer foreach/join step types.
+    async def _count_tasks_for_step(step_name: str) -> int:
+        try:
+            async with session.get(
+                f"{service_url}/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    return 1
+                data: Any = await resp.json()
+            tasks = data.get("data", data) if isinstance(data, dict) else data
+            return len(tasks) if isinstance(tasks, list) else 1
+        except Exception:
+            return 1
+
+    counts_list = await asyncio.gather(*(_count_tasks_for_step(n) for n in ordered_names))
+    task_counts: dict[str, int] = dict(zip(ordered_names, counts_list))
+
+    dag_steps: dict[str, Any] = {}
+    for idx, name in enumerate(ordered_names):
+        next_steps = [ordered_names[idx + 1]] if idx + 1 < len(ordered_names) else []
+        prev_name = ordered_names[idx - 1] if idx > 0 else None
+        count = task_counts.get(name, 1)
+        prev_count = task_counts.get(prev_name, 1) if prev_name else 1
+        if name == "start":
+            step_type = "start"
+        elif name == "end":
+            step_type = "end"
+        elif count > 1:
+            step_type = "foreach"
+        elif prev_count > 1 and count == 1:
+            step_type = "join"
+        else:
+            step_type = "linear"
+        dag_steps[name] = {
+            "name": name,
+            "type": step_type,
+            "next": next_steps,
+            "doc": "",
+            "decorators": [],
+        }
+
+    dag = {
+        "file": "",
+        "parameters": [],
+        "constants": [],
+        "steps": dag_steps,
+        "graph_structure": ordered_names,
+        "doc": "",
+        "decorators": [],
+        "extensions": {},
+    }
+    return web.json_response({"data": dag, "links": {"next": None}})
+
+
+async def _task_logs_handler(request: web.Request) -> web.Response:
+    """
+    Compatibility endpoint for task logs.
+
+    Tries the upstream metadata endpoint first. If unavailable, falls back to
+    GHA queue logs stored in S3 (combined stdout/stderr stream).
+    """
+    session: aiohttp.ClientSession = request.app["session"]
+    service_url: str = request.app["service_url"]
+    service_auth_key: str | None = request.app.get("service_auth_key")
+    headers = {"x-api-key": service_auth_key} if service_auth_key else None
+    flow_id = request.match_info.get("flow_id", "")
+    run_id = request.match_info.get("run_id", "")
+    step_name = request.match_info.get("step_name", "")
+    task_id = request.match_info.get("task_id", "")
+    stream = request.match_info.get("stream", "out")
+    resolved_task_id = await _resolve_task_identifier(
+        session=session,
+        service_url=service_url,
+        headers=headers,
+        flow_id=flow_id,
+        run_id=str(run_id),
+        step_name=step_name,
+        task_identifier=str(task_id),
+    )
+
+    upstream = (
+        f"{service_url}/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks/{resolved_task_id}/logs/{stream}"
+    )
+    try:
+        async with session.get(
+            upstream,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            body = await resp.read()
+            if resp.status == 200:
+                return web.Response(
+                    status=200,
+                    body=_wrap_data_payload(body),
+                    headers={"Content-Type": "application/json"},
+                )
+    except Exception:
+        pass
+
+    # Try reading from S3 datastore via task metadata.
+    datastore_config: dict[str, Any] = request.app.get("datastore_config") or {}
+    s3_lines = await _read_s3_task_log(
+        session=session,
+        service_url=service_url,
+        headers=headers,
+        flow_id=flow_id,
+        run_id=str(run_id),
+        step_name=step_name,
+        task_id=str(resolved_task_id),
+        stream=stream,
+        datastore_config=datastore_config,
+    )
+    if s3_lines is not None:
+        ts = int(time.time() * 1000)
+        data = [{"row": i, "timestamp": ts, "line": line} for i, line in enumerate(s3_lines)]
+        return web.json_response({"data": data, "links": {"next": None}})
+
+    lines = _read_gha_task_log_lines(run_id=str(run_id), task_id=str(resolved_task_id))
+    if not lines:
+        return web.json_response({"data": [], "links": {"next": None}})
+
+    ts = int(time.time() * 1000)
+    data = [{"row": i, "timestamp": ts, "line": line} for i, line in enumerate(lines)]
+    return web.json_response({"data": data})
+
+
+def _normalize_runs_payload(payload: bytes) -> bytes:
+    """
+    Ensure run responses include ``run_id`` for UI compatibility.
+
+    Some backends return ``run_id: null`` while the UI uses run_id to fetch
+    run-specific resources. We backfill from run_number when needed.
+    """
+    try:
+        data = json.loads(payload.decode("utf-8"))
+    except Exception:
+        return payload
+
+    def _fix_run_obj(obj: dict[str, Any]) -> None:
+        run_id = obj.get("run_id")
+        run_number = obj.get("run_number")
+        if run_id is None and run_number is not None:
+            obj["run_id"] = str(run_number)
+        if "user" not in obj and obj.get("user_name") is not None:
+            obj["user"] = obj.get("user_name")
+        if "status" not in obj:
+            obj["status"] = _infer_run_status(obj)
+
+    if isinstance(data, dict):
+        _fix_run_obj(data)
+    elif isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                _fix_run_obj(item)
+    else:
+        return payload
+
+    try:
+        return json.dumps(data, separators=(",", ":")).encode("utf-8")
+    except Exception:
+        return payload
+
+
+def _wrap_data_payload(payload: bytes) -> bytes:
+    """
+    Wrap JSON payload as {"data": ..., "links": {"next": null}} if not already wrapped.
+
+    The Metaflow UI's fetch hook accesses ``response.links.next`` for pagination.
+    Without a ``links`` field the property access throws a TypeError which is caught
+    as a generic 500 error, so we always include ``links: {next: null}``.
+    """
+    try:
+        data = json.loads(payload.decode("utf-8"))
+    except Exception:
+        return payload
+    if isinstance(data, dict) and "data" in data:
+        # Already wrapped — add links if absent.
+        if "links" not in data:
+            data["links"] = {"next": None}
+            try:
+                return json.dumps(data, separators=(",", ":")).encode("utf-8")
+            except Exception:
+                pass
+        return payload
+    try:
+        return json.dumps({"data": data, "links": {"next": None}}, separators=(",", ":")).encode("utf-8")
+    except Exception:
+        return payload
+
+
+def _infer_run_status(run: dict[str, Any]) -> str:
+    """
+    Best-effort run status for UI compatibility.
+    """
+    now_ms = int(time.time() * 1000)
+    last_hb = run.get("last_heartbeat_ts")
+    try:
+        hb = int(last_hb) if last_hb is not None else None
+    except Exception:
+        hb = None
+    if hb is not None and (now_ms - hb) < 5 * 60 * 1000:
+        return "running"
+    return "completed"
+
+
+def _safe_ts(value: Any) -> int:
+    """
+    Best-effort timestamp normalization for sorting heterogeneous payloads.
+    """
+    try:
+        if value is None:
+            return 0
+        return int(float(value))
+    except Exception:
+        return 0
+
+
+async def _read_s3_task_log(
+    session: aiohttp.ClientSession,
+    service_url: str,
+    headers: dict[str, str] | None,
+    flow_id: str,
+    run_id: str,
+    step_name: str,
+    task_id: str,
+    stream: str,
+    datastore_config: dict[str, Any],
+) -> list[str] | None:
+    """
+    Read task log lines from the S3 datastore.
+
+    Fetches task metadata to find the ds-root and log SHA.
+    Metaflow stores log content in the content-addressed S3 store:
+      {ds-root}/data/{sha[:2]}/{sha[2:]}
+
+    The metadata fields ``log-stdout`` and ``log-stderr`` hold the SHA (or
+    full path) for the respective stream.  If those fields are absent (e.g.
+    for locally-executed tasks), returns None so callers can fall through.
+    """
+    # Map stream name to metadata field name.
+    field_name = "log-stdout" if stream in ("stdout", "out") else "log-stderr"
+
+    # Fetch task metadata.
+    try:
+        async with session.get(
+            f"{service_url}/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks/{task_id}/metadata",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                return None
+            meta_data: Any = await resp.json()
+    except Exception:
+        return None
+
+    entries = meta_data.get("data", meta_data) if isinstance(meta_data, dict) else meta_data
+    if not isinstance(entries, list):
+        return None
+
+    ds_root: str | None = None
+    log_sha: str | None = None
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        if item.get("field_name") == "ds-root":
+            ds_root = str(item.get("value", "")).strip()
+        if item.get("field_name") == field_name:
+            log_sha = str(item.get("value", "")).strip()
+
+    # No log metadata → local run or log not persisted; return None to fall through.
+    if not log_sha or not ds_root:
+        return None
+
+    # ds-root is like "s3://bucket/prefix".  Strip the s3:// scheme.
+    # Log object path: {ds-root}/data/{sha[:2]}/{sha[2:]}
+    s3_path = ds_root.lstrip("s3://")
+    parts = s3_path.split("/", 1)
+    if len(parts) != 2:
+        return None
+    bucket, prefix = parts[0], parts[1].rstrip("/")
+    obj_key = f"{prefix}/data/{log_sha[:2]}/{log_sha[2:]}"
+
+    endpoint_url = datastore_config.get("METAFLOW_S3_ENDPOINT_URL")
+    access_key = datastore_config.get("AWS_ACCESS_KEY_ID")
+    secret_key = datastore_config.get("AWS_SECRET_ACCESS_KEY")
+    region = datastore_config.get("AWS_DEFAULT_REGION", "us-east-1")
+
+    # Try boto3 first (works for standard S3-compatible endpoints).
+    try:
+        import boto3  # type: ignore
+        import asyncio
+
+        def _boto_get() -> bytes:
+            kwargs: dict[str, Any] = {"region_name": region}
+            if endpoint_url:
+                kwargs["endpoint_url"] = endpoint_url
+            if access_key and secret_key:
+                kwargs["aws_access_key_id"] = access_key
+                kwargs["aws_secret_access_key"] = secret_key
+            client = boto3.client("s3", **kwargs)
+            resp = client.get_object(Bucket=bucket, Key=obj_key)
+            return resp["Body"].read()
+
+        raw = await asyncio.to_thread(_boto_get)
+        try:
+            import gzip
+            raw = gzip.decompress(raw)
+        except Exception:
+            pass
+        return raw.decode("utf-8", errors="replace").splitlines()
+    except Exception:
+        pass
+
+    # Fallback: plain HTTPS GET with Bearer auth (works for Supabase Storage).
+    if endpoint_url:
+        try:
+            # Supabase Storage download URL:
+            # {endpoint_base}/object/authenticated/{bucket}/{key}
+            endpoint_base = endpoint_url.rstrip("/").removesuffix("/s3")
+            download_url = f"{endpoint_base}/object/authenticated/{bucket}/{obj_key}"
+            dl_headers: dict[str, str] = {}
+            if secret_key:
+                dl_headers["Authorization"] = f"Bearer {secret_key}"
+            async with session.get(
+                download_url,
+                headers=dl_headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status == 200:
+                    raw = await resp.read()
+                    try:
+                        import gzip
+                        raw = gzip.decompress(raw)
+                    except Exception:
+                        pass
+                    return raw.decode("utf-8", errors="replace").splitlines()
+        except Exception:
+            pass
+
+    return None
+
+
+def _read_gha_task_log_lines(run_id: str, task_id: str) -> list[str]:
+    """
+    Read task logs from the GHA S3 queue, if coordinator deps/config are present.
+    """
+    log_reader = _get_gha_log_reader()
+    if log_reader is None:
+        return []
+    s3, bucket, prefix, read_task_log = log_reader
+
+    try:
+        content = read_task_log(s3, bucket, prefix, run_id, task_id)
+    except Exception:
+        return []
+
+    if not content:
+        return []
+    return str(content).splitlines()
+
+
+async def _task_attempts_handler(request: web.Request) -> web.Response:
+    """
+    Synthesize attempt objects for a task from its metadata.
+
+    The metadata service has no native /attempts endpoint; we build the response
+    from task data + metadata entries tagged with ``attempt_id:<N>``.
+    """
+    session: aiohttp.ClientSession = request.app["session"]
+    service_url: str = request.app["service_url"]
+    service_auth_key: str | None = request.app.get("service_auth_key")
+    headers = {"x-api-key": service_auth_key} if service_auth_key else None
+    flow_id = request.match_info.get("flow_id", "")
+    run_id = request.match_info.get("run_id", "")
+    step_name = request.match_info.get("step_name", "")
+    task_id = request.match_info.get("task_id", "")
+
+    resolved_id = await _resolve_task_identifier(
+        session=session,
+        service_url=service_url,
+        headers=headers,
+        flow_id=flow_id,
+        run_id=str(run_id),
+        step_name=step_name,
+        task_identifier=str(task_id),
+    )
+
+    task_url = f"{service_url}/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks/{resolved_id}"
+    try:
+        async with session.get(task_url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as r:
+            raw_task: Any = await r.json() if r.status == 200 else {}
+        async with session.get(f"{task_url}/metadata", headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as r:
+            raw_meta: Any = await r.json() if r.status == 200 else {}
+    except Exception:
+        return web.json_response({"data": [], "links": {"next": None}})
+
+    task = raw_task.get("data", raw_task) if isinstance(raw_task, dict) else {}
+    if isinstance(task, list):
+        task = task[0] if task else {}
+
+    if isinstance(raw_meta, list):
+        meta_entries = raw_meta
+    elif isinstance(raw_meta, dict):
+        meta_entries = raw_meta.get("data", [])
+        if not isinstance(meta_entries, list):
+            meta_entries = []
+    else:
+        meta_entries = []
+
+    # Group metadata by attempt_id
+    by_attempt: dict[int, dict[str, Any]] = {}
+    for entry in meta_entries:
+        aid = 0
+        for tag in (entry.get("tags") or []):
+            if tag.startswith("attempt_id:"):
+                try:
+                    aid = int(tag.split(":", 1)[1])
+                except (IndexError, ValueError):
+                    pass
+        if aid not in by_attempt:
+            by_attempt[aid] = {}
+        by_attempt[aid][entry.get("field_name", "")] = entry
+
+    if not by_attempt:
+        by_attempt[0] = {}
+
+    attempts = []
+    started_at = task.get("ts_epoch")
+    for aid, fields in sorted(by_attempt.items()):
+        done_entry = fields.get("attempt-done") or fields.get("attempt_ok")
+        finished_at = done_entry.get("ts_epoch") if done_entry else None
+        ok_entry = fields.get("attempt_ok")
+        ok_val = ok_entry.get("value") if ok_entry else None
+        if ok_val == "True":
+            status = "completed"
+        elif ok_val == "False":
+            status = "failed"
+        else:
+            status = "running"
+        attempts.append({
+            "flow_id": flow_id,
+            "run_number": task.get("run_number"),
+            "run_id": str(run_id),
+            "step_name": step_name,
+            "task_id": task.get("task_id"),
+            "task_name": task.get("task_name") or task_id,
+            "attempt_id": aid,
+            "ts_epoch": started_at,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "duration": (finished_at - started_at) if (finished_at and started_at) else None,
+            "status": status,
+            "user_name": task.get("user_name"),
+            "tags": task.get("tags", []),
+            "system_tags": task.get("system_tags", []),
+        })
+
+    return web.json_response({"data": attempts, "links": {"next": None}})
+
+
+async def _task_detail_handler(request: web.Request) -> web.Response:
+    session: aiohttp.ClientSession = request.app["session"]
+    service_url: str = request.app["service_url"]
+    service_auth_key: str | None = request.app.get("service_auth_key")
+    headers = {"x-api-key": service_auth_key} if service_auth_key else None
+    flow_id = request.match_info.get("flow_id", "")
+    run_id = request.match_info.get("run_id", "")
+    step_name = request.match_info.get("step_name", "")
+    task_id = request.match_info.get("task_id", "")
+    resolved_task_id = await _resolve_task_identifier(
+        session=session,
+        service_url=service_url,
+        headers=headers,
+        flow_id=flow_id,
+        run_id=str(run_id),
+        step_name=step_name,
+        task_identifier=str(task_id),
+    )
+    try:
+        async with session.get(
+            f"{service_url}/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks/{resolved_task_id}",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            body = await resp.read()
+            if resp.status == 200:
+                return web.Response(
+                    status=200,
+                    body=_wrap_data_payload(body),
+                    headers={"Content-Type": "application/json"},
+                )
+            return web.json_response({"data": [], "links": {"next": None}})
+    except Exception:
+        return web.json_response({"data": [], "links": {"next": None}})
+
+
+async def _task_metadata_handler(request: web.Request) -> web.Response:
+    session: aiohttp.ClientSession = request.app["session"]
+    service_url: str = request.app["service_url"]
+    service_auth_key: str | None = request.app.get("service_auth_key")
+    headers = {"x-api-key": service_auth_key} if service_auth_key else None
+    flow_id = request.match_info.get("flow_id", "")
+    run_id = request.match_info.get("run_id", "")
+    step_name = request.match_info.get("step_name", "")
+    task_id = request.match_info.get("task_id", "")
+    resolved_task_id = await _resolve_task_identifier(
+        session=session,
+        service_url=service_url,
+        headers=headers,
+        flow_id=flow_id,
+        run_id=str(run_id),
+        step_name=step_name,
+        task_identifier=str(task_id),
+    )
+    try:
+        async with session.get(
+            f"{service_url}/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks/{resolved_task_id}/metadata",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            body = await resp.read()
+            if resp.status == 200:
+                return web.Response(
+                    status=200,
+                    body=_wrap_data_payload(body),
+                    headers={"Content-Type": "application/json"},
+                )
+            return web.json_response({"data": [], "links": {"next": None}})
+    except Exception:
+        return web.json_response({"data": [], "links": {"next": None}})
+
+
+async def _resolve_task_identifier(
+    session: aiohttp.ClientSession,
+    service_url: str,
+    headers: dict[str, str] | None,
+    flow_id: str,
+    run_id: str,
+    step_name: str,
+    task_identifier: str,
+) -> str:
+    """
+    Resolve either numeric task_id or task_name to a numeric task_id string.
+    """
+    if task_identifier.isdigit():
+        return task_identifier
+    try:
+        async with session.get(
+            f"{service_url}/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status != 200:
+                return task_identifier
+            data: Any = await resp.json()
+        tasks = data.get("data", data) if isinstance(data, dict) else data
+        if not isinstance(tasks, list):
+            return task_identifier
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            if str(task.get("task_name", "")) == task_identifier:
+                tid = task.get("task_id")
+                if tid is not None:
+                    return str(tid)
+    except Exception:
+        return task_identifier
+    return task_identifier
+
+
+@lru_cache(maxsize=1)
+def _get_gha_log_reader() -> tuple[Any, str, str, Any] | None:
+    """
+    Build and cache the S3 log reader dependencies once per process.
+    """
+    try:
+        import boto3  # type: ignore
+        from metaflow_coordinator.s3_queue import read_task_log, _bucket_prefix_from_env
+    except Exception:
+        return None
+
+    try:
+        bucket, prefix = _bucket_prefix_from_env()
+    except Exception:
+        return None
+
+    endpoint = os.environ.get("AWS_ENDPOINT_URL_S3") or os.environ.get("METAFLOW_S3_ENDPOINT_URL")
+    kwargs: dict[str, Any] = {}
+    if endpoint:
+        kwargs["endpoint_url"] = endpoint
+
+    try:
+        s3 = boto3.client("s3", **kwargs)
+    except Exception:
+        return None
+
+    return (s3, bucket, prefix, read_task_log)
+
+
+async def _infer_task_status(
+    session: aiohttp.ClientSession,
+    service_url: str,
+    headers: dict[str, str] | None,
+    flow_id: str,
+    run_id: str,
+    step_name: str,
+    task: dict[str, Any],
+) -> str:
+    """
+    Best-effort task status for UI compatibility.
+    """
+    step = str(task.get("step_name") or step_name)
+    if step == "_parameters":
+        return "completed"
+
+    task_ok = task.get("task_ok")
+    if isinstance(task_ok, bool):
+        return "completed" if task_ok else "failed"
+    if isinstance(task_ok, str):
+        v = task_ok.strip().lower()
+        if v in {"true", "1", "ok", ":root:s3"}:
+            return "completed"
+        if v in {"false", "0", "error", "failed"}:
+            return "failed"
+
+    task_id = task.get("task_id")
+    if task_id is not None:
+        try:
+            async with session.get(
+                f"{service_url}/flows/{flow_id}/runs/{run_id}/steps/{step}/tasks/{task_id}/metadata",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    meta_data: Any = await resp.json()
+                    entries = meta_data.get("data", meta_data) if isinstance(meta_data, dict) else meta_data
+                    if isinstance(entries, list):
+                        attempt_ok = None
+                        for item in entries:
+                            if not isinstance(item, dict):
+                                continue
+                            if item.get("field_name") == "attempt_ok":
+                                attempt_ok = str(item.get("value", "")).strip().lower()
+                        if attempt_ok in {"true", "1"}:
+                            return "completed"
+                        if attempt_ok in {"false", "0"}:
+                            return "failed"
+        except Exception:
+            pass
+
+    # If heartbeat is recent and completion markers are missing, treat as running.
+    now_ms = int(time.time() * 1000)
+    last_hb = task.get("last_heartbeat_ts") or task.get("ts_epoch")
+    try:
+        hb = int(last_hb) if last_hb is not None else None
+    except Exception:
+        hb = None
+    if hb is not None and (now_ms - hb) < 5 * 60 * 1000:
+        return "running"
+
+    return "completed"
+
+
 # ---------------------------------------------------------------------------
 # WebSocket handler
 # ---------------------------------------------------------------------------
@@ -294,6 +1385,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     The connection is kept alive until the browser disconnects.
     """
     service_url: str = request.app["service_url"]
+    service_auth_key: str | None = request.app.get("service_auth_key")
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -303,7 +1395,14 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     async with aiohttp.ClientSession() as session:
         while not ws.closed:
             try:
-                current = await _fetch_active_state(session, service_url)
+                if service_auth_key:
+                    current = await _fetch_active_state(
+                        session,
+                        service_url,
+                        service_auth_key=service_auth_key,
+                    )
+                else:
+                    current = await _fetch_active_state(session, service_url)
                 diff = _compute_diff(last_state, current)
                 if diff:
                     await ws.send_json({"type": "UPDATE", "data": diff})
@@ -319,6 +1418,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
 async def _fetch_active_state(
     session: aiohttp.ClientSession,
     service_url: str,
+    service_auth_key: str | None = None,
 ) -> dict[str, Any]:
     """
     Fetch runs that have had a heartbeat in the last 300 seconds.
@@ -329,9 +1429,11 @@ async def _fetch_active_state(
     Returns an empty dict if the service is unreachable or returns an error.
     """
     try:
+        headers = {"x-api-key": service_auth_key} if service_auth_key else None
         # Fetch all flows first.
         async with session.get(
             f"{service_url}/flows",
+            headers=headers,
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             if resp.status != 200:
@@ -354,6 +1456,7 @@ async def _fetch_active_state(
                 async with session.get(
                     f"{service_url}/flows/{flow_id}/runs",
                     params={"_order": "ts_epoch:desc", "_limit": "10"},
+                    headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as runs_resp:
                     if runs_resp.status != 200:

@@ -64,9 +64,14 @@ class ComputeCredentials:
     """Credentials / connection info returned after compute is provisioned."""
 
     service_url: str   # The URL Metaflow client will call, e.g. https://...run.app
+    service_auth_key: str | None = None
 
     def __repr__(self) -> str:
-        return f"ComputeCredentials(service_url={self.service_url!r})"
+        has_key = bool(self.service_auth_key)
+        return (
+            f"ComputeCredentials(service_url={self.service_url!r}, "
+            f"service_auth_key={'***' if has_key else None})"
+        )
 
 
 # ---------------------------------------------------------------------------

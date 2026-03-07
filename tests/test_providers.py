@@ -273,3 +273,12 @@ class TestComputeCredentials:
     def test_repr_shows_url(self):
         creds = ComputeCredentials(service_url="https://myservice.run.app")
         assert "myservice.run.app" in repr(creds)
+
+    def test_repr_masks_service_auth_key(self):
+        creds = ComputeCredentials(
+            service_url="https://myservice.run.app",
+            service_auth_key="super-secret",
+        )
+        r = repr(creds)
+        assert "super-secret" not in r
+        assert "***" in r

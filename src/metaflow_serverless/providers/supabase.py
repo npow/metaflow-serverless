@@ -321,12 +321,74 @@ class SupabaseDatabaseProvider(DatabaseProvider):
         )
 
 
+async def _register_s3_credentials_in_db(
+    dsn: str,
+    access_key_id: str,
+    secret_access_key: str,
+    description: str = "metaflow",
+) -> bool:
+    """
+    Insert an S3 key pair into Supabase Storage's ``storage.s3_credentials`` table.
+
+    Returns ``True`` if the row was inserted successfully, ``False`` if the table
+    does not exist (e.g. older Supabase version without S3 support).
+    Raises ``RuntimeError`` for other database errors.
+    """
+    try:
+        import asyncpg  # type: ignore[import]
+    except ImportError as exc:
+        raise RuntimeError(
+            "asyncpg is required for registering S3 credentials. "
+            "Install it with: pip install asyncpg"
+        ) from exc
+
+    try:
+        conn = await asyncpg.connect(dsn)
+    except Exception as exc:
+        raise RuntimeError(f"Could not connect to database: {exc}") from exc
+
+    try:
+        # Check the table exists before inserting.
+        exists = await conn.fetchval(
+            """
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'storage' AND table_name = 's3_credentials'
+            """
+        )
+        if not exists:
+            return False
+
+        # Remove any previous metaflow-managed credentials and insert fresh ones.
+        await conn.execute(
+            "DELETE FROM storage.s3_credentials WHERE description = $1",
+            description,
+        )
+        await conn.execute(
+            """
+            INSERT INTO storage.s3_credentials
+                (access_key_id, access_key_secret, description)
+            VALUES ($1, $2, $3)
+            """,
+            access_key_id,
+            secret_access_key,
+            description,
+        )
+        return True
+    finally:
+        await conn.close()
+
+
 class SupabaseStorageProvider(StorageProvider):
     """
     Provisions an S3-compatible storage bucket on Supabase Storage.
 
-    Supabase Storage exposes an S3-compatible API, so we can configure
-    Metaflow's S3 datastore to point at it.
+    Supabase Storage exposes an S3-compatible API backed by its own Postgres
+    table (``storage.s3_credentials``).  Proper S3 access requires dedicated
+    key pairs registered in that table — JWT API tokens do NOT work as HMAC
+    credentials.
+
+    Call ``set_db_dsn(dsn)`` before ``provision()`` so that the provider can
+    INSERT the generated credentials into the database.
     """
 
     name = "supabase"
@@ -344,6 +406,11 @@ class SupabaseStorageProvider(StorageProvider):
             determined from the list of projects at provision time.
         """
         self._project_ref = project_ref
+        self._db_dsn: str | None = None
+
+    def set_db_dsn(self, dsn: str) -> None:
+        """Provide the Postgres DSN so proper S3 credentials can be registered."""
+        self._db_dsn = dsn
 
     async def ensure_cli_installed(self) -> None:
         """Install the Supabase CLI if not already on the PATH."""
@@ -383,10 +450,13 @@ class SupabaseStorageProvider(StorageProvider):
 
     async def provision(self, bucket_name: str) -> StorageCredentials:
         """
-        Create a Supabase Storage bucket and return S3-compatible credentials.
+        Create a Supabase Storage bucket and return proper S3 credentials.
 
-        The S3 endpoint is derived from the project reference, and credentials
-        are fetched via the Supabase CLI API keys command.
+        Supabase Storage validates S3 requests via HMAC against key pairs stored
+        in ``storage.s3_credentials``.  This method generates a dedicated key
+        pair and inserts it into that table using the DB DSN supplied via
+        ``set_db_dsn()``.  JWT API tokens are used only for the Storage REST API
+        calls (bucket creation), not as S3 credentials.
         """
         await self.ensure_cli_installed()
 
@@ -398,7 +468,7 @@ class SupabaseStorageProvider(StorageProvider):
 
         endpoint_url = f"https://{project_ref}.supabase.co/storage/v1/s3"
 
-        # Retrieve API keys for S3 credentials and Storage API auth.
+        # Retrieve the service_role key for Storage REST API calls (bucket creation).
         rc, stdout, stderr = await _run_async(
             [
                 "supabase", "projects", "api-keys",
@@ -419,8 +489,6 @@ class SupabaseStorageProvider(StorageProvider):
                 f"Unexpected output from 'supabase projects api-keys':\n{stdout}"
             ) from exc
 
-        # The service_role key acts as the S3 secret; use the anon key as ID.
-        # keys_data is typically a list of {"name": ..., "api_key": ...} dicts.
         keys_by_name: dict[str, str] = {}
         if isinstance(keys_data, list):
             for entry in keys_data:
@@ -428,27 +496,45 @@ class SupabaseStorageProvider(StorageProvider):
         elif isinstance(keys_data, dict):
             keys_by_name = {k: v for k, v in keys_data.items() if isinstance(v, str)}
 
-        api_access_key_id = keys_by_name.get("anon", keys_by_name.get("anon key", ""))
-        api_secret_access_key = keys_by_name.get(
+        service_role_key = keys_by_name.get(
             "service_role", keys_by_name.get("service_role key", "")
         )
-
-        if not api_access_key_id or not api_secret_access_key:
+        if not service_role_key:
             raise RuntimeError(
-                f"Could not extract S3 credentials from Supabase API keys: "
+                f"Could not find service_role key in Supabase API keys: "
                 f"{list(keys_by_name.keys())}"
             )
 
-        await _create_storage_bucket(project_ref, bucket_name, api_secret_access_key)
+        # Create the bucket (idempotent).
+        await _create_storage_bucket(project_ref, bucket_name, service_role_key)
 
-        # Supabase S3-compatible storage may require dedicated S3 keys that are
-        # distinct from API JWT keys. Allow explicit env overrides when present.
-        access_key_id = os.environ.get(
-            "SUPABASE_S3_ACCESS_KEY_ID", api_access_key_id
-        ).strip()
-        secret_access_key = os.environ.get(
-            "SUPABASE_S3_SECRET_ACCESS_KEY", api_secret_access_key
-        ).strip()
+        # Generate a proper S3 key pair for HMAC authentication.
+        # These are registered in storage.s3_credentials so Supabase's S3 API
+        # can validate signed requests.
+        access_key_id = secrets.token_urlsafe(20)
+        secret_access_key = secrets.token_urlsafe(30)
+
+        if self._db_dsn:
+            registered = await _register_s3_credentials_in_db(
+                self._db_dsn, access_key_id, secret_access_key, bucket_name
+            )
+            if registered:
+                console.print(
+                    "[green]S3 credentials registered in storage.s3_credentials.[/green]"
+                )
+            else:
+                console.print(
+                    "[yellow]Warning: could not register S3 credentials automatically "
+                    "(storage.s3_credentials table not found).[/yellow]\n"
+                    "Create S3 credentials manually: Supabase Dashboard → "
+                    "Project Settings → Storage → S3 Access Keys, then update "
+                    "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in ~/.metaflowconfig."
+                )
+        else:
+            console.print(
+                "[yellow]Warning: DB DSN not available; S3 credentials not registered "
+                "in database. Storage will not work until credentials are registered.[/yellow]"
+            )
 
         return StorageCredentials(
             endpoint_url=endpoint_url,
@@ -476,6 +562,7 @@ class SupabaseComputeProvider(ComputeProvider):
 
     # Name of the edge function as deployed on Supabase.
     _FUNCTION_NAME = "metadata-router"
+    _SERVICE_AUTH_ENV = "METAFLOW_SERVICE_AUTH_KEY"
 
     async def ensure_cli_installed(self) -> None:
         """Install the Supabase CLI if not already on the PATH."""
@@ -544,6 +631,10 @@ class SupabaseComputeProvider(ComputeProvider):
                 "Run the database provider first."
             )
         project_ref: str = project["id"]
+        service_auth_key = os.environ.get(self._SERVICE_AUTH_ENV, "").strip()
+        if not service_auth_key:
+            # Generate a random API key used by Metaflow clients and mf-ui.
+            service_auth_key = secrets.token_urlsafe(32)
 
         # Set DB credentials as edge function secrets.
         secrets_env = "\n".join(
@@ -554,6 +645,7 @@ class SupabaseComputeProvider(ComputeProvider):
                 f"MF_METADATA_DB_USER={db.username}",
                 f"MF_METADATA_DB_PASS={db.password}",
                 f"MF_METADATA_DB_NAME={db.database}",
+                f"{self._SERVICE_AUTH_ENV}={service_auth_key}",
             ]
         )
 
@@ -617,4 +709,7 @@ class SupabaseComputeProvider(ComputeProvider):
             f"https://{project_ref}.supabase.co/functions/v1/{self._FUNCTION_NAME}"
         )
         console.print(f"[green]Edge function deployed:[/green] {service_url}")
-        return ComputeCredentials(service_url=service_url)
+        return ComputeCredentials(
+            service_url=service_url,
+            service_auth_key=service_auth_key,
+        )

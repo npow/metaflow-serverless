@@ -112,6 +112,19 @@ class MetaflowConfig:
         config = self.read()
         return config.get("METAFLOW_SERVICE_URL") or None
 
+    def get_service_auth_key(self) -> str | None:
+        """
+        Return the configured metadata service auth key, or None if not set.
+
+        Checks METAFLOW_SERVICE_AUTH_KEY, which Metaflow sends as ``x-api-key``
+        on metadata service requests.
+        """
+        config = self.read()
+        value = config.get("METAFLOW_SERVICE_AUTH_KEY")
+        if not value:
+            return None
+        return str(value)
+
     def get_datastore_config(self) -> dict[str, Any]:
         """
         Return the S3-compatible datastore configuration from the config file.

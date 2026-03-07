@@ -16,7 +16,7 @@ Existing alternatives either require a paid Outerbounds subscription or leave yo
 ## Quick start
 
 ```bash
-pip install metaflow-ephemeral-service
+pip install metaflow-serverless
 mf-setup
 python flow.py run
 ```
@@ -26,7 +26,7 @@ python flow.py run
 ## Install
 
 ```bash
-pip install metaflow-ephemeral-service
+pip install metaflow-serverless
 ```
 
 Requires Python 3.10+. Metaflow must be installed separately:
@@ -76,14 +76,7 @@ The wizard writes Metaflow global config to:
 
 ### Supabase S3 credentials
 
-Supabase API keys are not always valid S3 credentials for object writes.
-If your flow fails with S3 auth errors (`InvalidAccessKeyId` / access denied), provide explicit S3 keys:
-
-```bash
-export SUPABASE_S3_ACCESS_KEY_ID=...
-export SUPABASE_S3_SECRET_ACCESS_KEY=...
-mf-setup
-```
+`mf-setup` automatically provisions HMAC S3 credentials for your project and registers them in the database. No manual key management is needed. Credentials are written to `~/.metaflowconfig/config.json` and used for all artifact reads/writes.
 
 ### Run a flow
 
@@ -117,7 +110,7 @@ Metadata and artifacts are recorded in your provisioned service automatically.
 mf-ui
 ```
 
-Starts a local proxy on `localhost:8083` that downloads and serves the Metaflow UI, backed by your remote service.
+Starts a local proxy on `localhost:8083` that downloads and serves the Metaflow UI, backed by your remote service. Supports flows list, run detail, DAG view, timeline view, task detail (attempt history, duration, status), and log streaming.
 
 ## How it works
 

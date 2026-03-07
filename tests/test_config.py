@@ -67,6 +67,18 @@ class TestMetaflowConfig:
         cfg = MetaflowConfig(path=path)
         assert cfg.get_service_url() is None
 
+    def test_get_service_auth_key(self, tmp_path):
+        """get_service_auth_key() returns the METAFLOW_SERVICE_AUTH_KEY value."""
+        path = tmp_path / ".metaflowconfig"
+        path.write_text(json.dumps({"METAFLOW_SERVICE_AUTH_KEY": "abc123"}))
+        cfg = MetaflowConfig(path=path)
+        assert cfg.get_service_auth_key() == "abc123"
+
+    def test_get_service_auth_key_missing(self, tmp_path):
+        """get_service_auth_key() returns None when key is absent."""
+        cfg = MetaflowConfig(path=tmp_path / ".metaflowconfig")
+        assert cfg.get_service_auth_key() is None
+
     def test_read_invalid_json(self, tmp_path):
         """Returns empty dict if the config file contains invalid JSON."""
         path = tmp_path / ".metaflowconfig"
