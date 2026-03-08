@@ -1002,7 +1002,7 @@ async def _read_s3_task_log(
     try:
         import asyncio
 
-        import boto3  # type: ignore
+        import boto3
 
         def _boto_get() -> bytes:
             kwargs: dict[str, Any] = {"region_name": region}
@@ -1294,7 +1294,7 @@ def _get_gha_log_reader() -> tuple[Any, str, str, Any] | None:
     Build and cache the S3 log reader dependencies once per process.
     """
     try:
-        import boto3  # type: ignore
+        import boto3
         from metaflow_coordinator.s3_queue import _bucket_prefix_from_env, read_task_log
     except Exception:
         return None
@@ -1493,7 +1493,7 @@ async def _fetch_active_state(
                     # Include runs with a heartbeat within the last 300 seconds.
                     import time
 
-                    if isinstance(last_hb, (int, float)) and (time.time() - last_hb / 1000) < 300:
+                    if isinstance(last_hb, int | float) and (time.time() - last_hb / 1000) < 300:
                         run_id = f"{flow_id}/{run.get('run_number') or run.get('run_id')}"
                         active_state[run_id] = run
             except Exception:

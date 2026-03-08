@@ -514,7 +514,7 @@ async def _run_migrations_asyncpg(dsn: str) -> None:
         ``postgresql://user:pass@host/db``.
     """
     try:
-        import asyncpg  # type: ignore[import]
+        import asyncpg
     except ImportError as exc:
         raise RuntimeError(
             "asyncpg is required for running migrations on non-Supabase databases. "

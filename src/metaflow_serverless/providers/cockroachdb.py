@@ -37,7 +37,7 @@ async def _run_async(cmd: list[str], **kwargs) -> tuple[int, str, str]:
         **kwargs,
     )
     out, err = await proc.communicate()
-    return proc.returncode, out.decode(), err.decode()
+    return proc.returncode or 0, out.decode(), err.decode()
 
 
 async def _install_ccloud() -> None:

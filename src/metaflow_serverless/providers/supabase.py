@@ -43,7 +43,7 @@ async def _run_async(cmd: list[str], **kwargs: Any) -> tuple[int, str, str]:
         **kwargs,
     )
     stdout_bytes, stderr_bytes = await proc.communicate()
-    return proc.returncode, stdout_bytes.decode(), stderr_bytes.decode()
+    return proc.returncode or 0, stdout_bytes.decode(), stderr_bytes.decode()
 
 
 def _run_sync(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -317,7 +317,7 @@ async def _register_s3_credentials_in_db(
     Raises ``RuntimeError`` for other database errors.
     """
     try:
-        import asyncpg  # type: ignore[import]
+        import asyncpg
     except ImportError as exc:
         raise RuntimeError(
             "asyncpg is required for registering S3 credentials. "
