@@ -156,7 +156,23 @@ All business logic lives in the database as stored procedures. The compute layer
 git clone https://github.com/npow/metaflow-serverless
 cd metaflow-serverless
 pip install -e ".[dev]"
-pytest -v
+pre-commit install
+```
+
+**Run tests with coverage:**
+```bash
+pytest --cov --cov-report=term-missing
+```
+
+**Lint and format:**
+```bash
+ruff check .
+ruff format .
+```
+
+**Type-check:**
+```bash
+mypy src/
 ```
 
 ## License
