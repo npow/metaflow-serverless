@@ -53,13 +53,9 @@ def _run_sync(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]
 
 async def _require_supabase_login() -> None:
     """Require an existing authenticated Supabase CLI session."""
-    rc, _, stderr = await _run_async(
-        ["supabase", "projects", "list", "--output", "json"]
-    )
+    rc, _, stderr = await _run_async(["supabase", "projects", "list", "--output", "json"])
     if rc == 0:
-        console.print(
-            "[green]Supabase CLI already authenticated; continuing.[/green]"
-        )
+        console.print("[green]Supabase CLI already authenticated; continuing.[/green]")
         return
     details = stderr.strip() or "Supabase CLI is not authenticated."
     raise RuntimeError(
@@ -79,15 +75,11 @@ def _get_org_id() -> str:
     """
     result = _run_sync(["supabase", "orgs", "list", "--output", "json"])
     if result.returncode != 0:
-        raise RuntimeError(
-            f"Failed to list Supabase organisations:\n{result.stderr.strip()}"
-        )
+        raise RuntimeError(f"Failed to list Supabase organisations:\n{result.stderr.strip()}")
     try:
         orgs = json.loads(result.stdout)
         if not orgs:
-            raise RuntimeError(
-                "No Supabase organisations found for the authenticated user."
-            )
+            raise RuntimeError("No Supabase organisations found for the authenticated user.")
         return orgs[0]["id"]
     except (json.JSONDecodeError, KeyError) as exc:
         raise RuntimeError(
@@ -97,13 +89,9 @@ def _get_org_id() -> str:
 
 async def _get_project_host(project_ref: str) -> str:
     """Return the database host for *project_ref* from `supabase projects list`."""
-    rc, stdout, stderr = await _run_async(
-        ["supabase", "projects", "list", "--output", "json"]
-    )
+    rc, stdout, stderr = await _run_async(["supabase", "projects", "list", "--output", "json"])
     if rc != 0:
-        raise RuntimeError(
-            f"Could not list Supabase projects (exit {rc}):\n{stderr.strip()}"
-        )
+        raise RuntimeError(f"Could not list Supabase projects (exit {rc}):\n{stderr.strip()}")
     projects = json.loads(stdout) if stdout.strip() else []
     project = next((p for p in projects if p.get("id") == project_ref), None)
     if not project:
@@ -136,15 +124,11 @@ async def _wait_for_project(
     """
     elapsed = 0.0
     while elapsed < timeout_seconds:
-        rc, stdout, stderr = await _run_async(
-            ["supabase", "projects", "list", "--output", "json"]
-        )
+        rc, stdout, stderr = await _run_async(["supabase", "projects", "list", "--output", "json"])
         if rc == 0 and stdout.strip():
             try:
                 projects = json.loads(stdout)
-                project = next(
-                    (p for p in projects if p.get("id") == project_ref), None
-                )
+                project = next((p for p in projects if p.get("id") == project_ref), None)
                 if project:
                     status: str = project.get("status", "")
                     if status == "ACTIVE_HEALTHY":
@@ -238,9 +222,7 @@ class SupabaseDatabaseProvider(DatabaseProvider):
         await self.ensure_cli_installed()
 
         # Check for an existing project with this name.
-        rc, stdout, stderr = await _run_async(
-            ["supabase", "projects", "list", "--output", "json"]
-        )
+        rc, stdout, stderr = await _run_async(["supabase", "projects", "list", "--output", "json"])
         projects: list[dict[str, Any]] = []
         if rc == 0 and stdout.strip():
             try:
@@ -248,16 +230,12 @@ class SupabaseDatabaseProvider(DatabaseProvider):
             except json.JSONDecodeError:
                 projects = []
 
-        existing = next(
-            (p for p in projects if p.get("name") == project_name), None
-        )
+        existing = next((p for p in projects if p.get("name") == project_name), None)
 
         db_password = ""
         if existing:
             project_ref: str = existing["id"]
-            console.print(
-                f"[yellow]Reusing existing Supabase project:[/yellow] {project_ref}"
-            )
+            console.print(f"[yellow]Reusing existing Supabase project:[/yellow] {project_ref}")
             db_password = os.environ.get("SUPABASE_DB_PASSWORD", "").strip()
             if not db_password:
                 raise RuntimeError(
@@ -269,17 +247,21 @@ class SupabaseDatabaseProvider(DatabaseProvider):
             org_id = _get_org_id()
             db_password = _generate_password()
 
-            console.print(
-                f"[bold]Creating Supabase project:[/bold] {project_name!r}"
-            )
+            console.print(f"[bold]Creating Supabase project:[/bold] {project_name!r}")
             rc, stdout, stderr = await _run_async(
                 [
-                    "supabase", "projects", "create",
+                    "supabase",
+                    "projects",
+                    "create",
                     project_name,
-                    "--org-id", org_id,
-                    "--db-password", db_password,
-                    "--region", "us-east-1",
-                    "--output", "json",
+                    "--org-id",
+                    org_id,
+                    "--db-password",
+                    db_password,
+                    "--region",
+                    "us-east-1",
+                    "--output",
+                    "json",
                 ]
             )
             if rc != 0:
@@ -431,13 +413,9 @@ class SupabaseStorageProvider(StorageProvider):
         if self._project_ref:
             return self._project_ref
 
-        rc, stdout, stderr = await _run_async(
-            ["supabase", "projects", "list", "--output", "json"]
-        )
+        rc, stdout, stderr = await _run_async(["supabase", "projects", "list", "--output", "json"])
         if rc != 0:
-            raise RuntimeError(
-                f"Could not list Supabase projects (exit {rc}):\n{stderr.strip()}"
-            )
+            raise RuntimeError(f"Could not list Supabase projects (exit {rc}):\n{stderr.strip()}")
         projects = json.loads(stdout) if stdout.strip() else []
         if not projects:
             raise RuntimeError(
@@ -471,15 +449,18 @@ class SupabaseStorageProvider(StorageProvider):
         # Retrieve the service_role key for Storage REST API calls (bucket creation).
         rc, stdout, stderr = await _run_async(
             [
-                "supabase", "projects", "api-keys",
-                "--project-ref", project_ref,
-                "--output", "json",
+                "supabase",
+                "projects",
+                "api-keys",
+                "--project-ref",
+                project_ref,
+                "--output",
+                "json",
             ]
         )
         if rc != 0:
             raise RuntimeError(
-                f"Failed to retrieve Supabase project API keys (exit {rc}):\n"
-                f"{stderr.strip()}"
+                f"Failed to retrieve Supabase project API keys (exit {rc}):\n{stderr.strip()}"
             )
 
         try:
@@ -501,8 +482,7 @@ class SupabaseStorageProvider(StorageProvider):
         )
         if not service_role_key:
             raise RuntimeError(
-                f"Could not find service_role key in Supabase API keys: "
-                f"{list(keys_by_name.keys())}"
+                f"Could not find service_role key in Supabase API keys: {list(keys_by_name.keys())}"
             )
 
         # Create the bucket (idempotent).
@@ -519,9 +499,7 @@ class SupabaseStorageProvider(StorageProvider):
                 self._db_dsn, access_key_id, secret_access_key, bucket_name
             )
             if registered:
-                console.print(
-                    "[green]S3 credentials registered in storage.s3_credentials.[/green]"
-                )
+                console.print("[green]S3 credentials registered in storage.s3_credentials.[/green]")
             else:
                 console.print(
                     "[yellow]Warning: could not register S3 credentials automatically "
@@ -612,13 +590,9 @@ class SupabaseComputeProvider(ComputeProvider):
         await self.ensure_cli_installed()
 
         # Resolve the project ref.
-        rc, stdout, stderr = await _run_async(
-            ["supabase", "projects", "list", "--output", "json"]
-        )
+        rc, stdout, stderr = await _run_async(["supabase", "projects", "list", "--output", "json"])
         if rc != 0:
-            raise RuntimeError(
-                f"Could not list Supabase projects (exit {rc}):\n{stderr.strip()}"
-            )
+            raise RuntimeError(f"Could not list Supabase projects (exit {rc}):\n{stderr.strip()}")
 
         projects: list[dict[str, Any]] = json.loads(stdout) if stdout.strip() else []
         project = next(
@@ -627,8 +601,7 @@ class SupabaseComputeProvider(ComputeProvider):
         )
         if not project:
             raise RuntimeError(
-                "No Supabase project found for compute deployment. "
-                "Run the database provider first."
+                "No Supabase project found for compute deployment. Run the database provider first."
             )
         project_ref: str = project["id"]
         service_auth_key = os.environ.get(self._SERVICE_AUTH_ENV, "").strip()
@@ -649,18 +622,20 @@ class SupabaseComputeProvider(ComputeProvider):
             ]
         )
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".env", delete=False
-        ) as tmp_env:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as tmp_env:
             tmp_env.write(secrets_env)
             env_file = tmp_env.name
 
         try:
             rc, stdout, stderr = await _run_async(
                 [
-                    "supabase", "secrets", "set",
-                    "--project-ref", project_ref,
-                    "--env-file", env_file,
+                    "supabase",
+                    "secrets",
+                    "set",
+                    "--project-ref",
+                    project_ref,
+                    "--env-file",
+                    env_file,
                 ]
             )
         finally:
@@ -678,9 +653,7 @@ class SupabaseComputeProvider(ComputeProvider):
         edge_fn_dir = self._find_edge_function_dir()
         with tempfile.TemporaryDirectory(prefix="mf-sb-fn-") as staging_dir:
             staging_root = Path(staging_dir)
-            function_dir = (
-                staging_root / "supabase" / "functions" / self._FUNCTION_NAME
-            )
+            function_dir = staging_root / "supabase" / "functions" / self._FUNCTION_NAME
             function_dir.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(edge_fn_dir, function_dir, dirs_exist_ok=True)
 
@@ -692,9 +665,12 @@ class SupabaseComputeProvider(ComputeProvider):
 
             rc, stdout, stderr = await _run_async(
                 [
-                    "supabase", "functions", "deploy",
+                    "supabase",
+                    "functions",
+                    "deploy",
                     self._FUNCTION_NAME,
-                    "--project-ref", project_ref,
+                    "--project-ref",
+                    project_ref,
                     "--no-verify-jwt",
                 ],
                 cwd=str(staging_root),
@@ -705,9 +681,7 @@ class SupabaseComputeProvider(ComputeProvider):
                 f"{self._FUNCTION_NAME!r} (exit {rc}):\n{stderr.strip()}"
             )
 
-        service_url = (
-            f"https://{project_ref}.supabase.co/functions/v1/{self._FUNCTION_NAME}"
-        )
+        service_url = f"https://{project_ref}.supabase.co/functions/v1/{self._FUNCTION_NAME}"
         console.print(f"[green]Edge function deployed:[/green] {service_url}")
         return ComputeCredentials(
             service_url=service_url,

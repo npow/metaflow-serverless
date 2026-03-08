@@ -1,11 +1,12 @@
 """
 Tests for the bundled SQL files (schema.sql and procedures.sql).
 """
+
 from __future__ import annotations
 
 import pytest
 
-from metaflow_serverless.sql.loader import load_schema, load_procedures
+from metaflow_serverless.sql.loader import load_procedures, load_schema
 
 
 class TestSchemaLoads:

@@ -10,6 +10,7 @@ from __future__ import annotations
 from .backblaze_b2 import BackblazeB2Provider
 from .base import ComputeProvider, DatabaseProvider, StorageProvider
 from .cloud_run import CloudRunProvider
+from .cloudflare_r2 import CloudflareR2Provider
 from .cockroachdb import CockroachDBProvider
 from .neon import NeonProvider
 from .render import RenderProvider
@@ -18,7 +19,6 @@ from .supabase import (
     SupabaseDatabaseProvider,
     SupabaseStorageProvider,
 )
-from .cloudflare_r2 import CloudflareR2Provider
 
 # ---------------------------------------------------------------------------
 # Provider registries
@@ -79,8 +79,7 @@ def get_database_provider(name: str) -> DatabaseProvider:
     cls = DATABASE_PROVIDERS.get(name)
     if cls is None:
         raise ValueError(
-            f"Unknown database provider: {name!r}. "
-            f"Available: {sorted(DATABASE_PROVIDERS.keys())}"
+            f"Unknown database provider: {name!r}. Available: {sorted(DATABASE_PROVIDERS.keys())}"
         )
     return cls()
 
@@ -97,8 +96,7 @@ def get_storage_provider(name: str) -> StorageProvider:
     cls = STORAGE_PROVIDERS.get(name)
     if cls is None:
         raise ValueError(
-            f"Unknown storage provider: {name!r}. "
-            f"Available: {sorted(STORAGE_PROVIDERS.keys())}"
+            f"Unknown storage provider: {name!r}. Available: {sorted(STORAGE_PROVIDERS.keys())}"
         )
     return cls()
 
@@ -115,8 +113,7 @@ def get_compute_provider(name: str) -> ComputeProvider:
     cls = COMPUTE_PROVIDERS.get(name)
     if cls is None:
         raise ValueError(
-            f"Unknown compute provider: {name!r}. "
-            f"Available: {sorted(COMPUTE_PROVIDERS.keys())}"
+            f"Unknown compute provider: {name!r}. Available: {sorted(COMPUTE_PROVIDERS.keys())}"
         )
     return cls()
 

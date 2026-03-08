@@ -12,8 +12,8 @@ from .base import (
     StorageProvider,
 )
 from .cloud_run import CloudRunProvider
-from .cockroachdb import CockroachDBProvider
 from .cloudflare_r2 import CloudflareR2Provider
+from .cockroachdb import CockroachDBProvider
 from .neon import NeonProvider
 from .registry import (
     COMPATIBLE_STACKS,

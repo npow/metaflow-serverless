@@ -1,10 +1,10 @@
 """
 Tests for metaflow_serverless.installer logic.
 """
+
 from __future__ import annotations
 
-import shutil
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -21,21 +21,41 @@ class TestEnsureCli:
 
     async def test_ensure_cli_unknown_no_installer(self):
         """Raises RuntimeError for CLI with no automatic installer."""
-        with patch("shutil.which", return_value=None):
-            with pytest.raises(RuntimeError, match="No automatic installer available"):
-                await ensure_cli("totally-unknown-cli-xyz")
+        with (
+            patch("shutil.which", return_value=None),
+            pytest.raises(RuntimeError, match="No automatic installer available"),
+        ):
+            await ensure_cli("totally-unknown-cli-xyz")
 
 
 class TestPickAsset:
     """Tests for the _pick_asset function."""
 
     MOCK_ASSETS = [
-        {"name": "mytool-darwin-arm64.tar.gz",  "browser_download_url": "https://example.com/darwin-arm64"},
-        {"name": "mytool-darwin-amd64.tar.gz",  "browser_download_url": "https://example.com/darwin-amd64"},
-        {"name": "mytool-linux-amd64.tar.gz",   "browser_download_url": "https://example.com/linux-amd64"},
-        {"name": "mytool-linux-arm64.tar.gz",   "browser_download_url": "https://example.com/linux-arm64"},
-        {"name": "mytool-darwin-arm64.tar.gz.sha256", "browser_download_url": "https://example.com/checksum"},
-        {"name": "mytool-darwin-arm64.tar.gz.sig",    "browser_download_url": "https://example.com/sig"},
+        {
+            "name": "mytool-darwin-arm64.tar.gz",
+            "browser_download_url": "https://example.com/darwin-arm64",
+        },
+        {
+            "name": "mytool-darwin-amd64.tar.gz",
+            "browser_download_url": "https://example.com/darwin-amd64",
+        },
+        {
+            "name": "mytool-linux-amd64.tar.gz",
+            "browser_download_url": "https://example.com/linux-amd64",
+        },
+        {
+            "name": "mytool-linux-arm64.tar.gz",
+            "browser_download_url": "https://example.com/linux-arm64",
+        },
+        {
+            "name": "mytool-darwin-arm64.tar.gz.sha256",
+            "browser_download_url": "https://example.com/checksum",
+        },
+        {
+            "name": "mytool-darwin-arm64.tar.gz.sig",
+            "browser_download_url": "https://example.com/sig",
+        },
     ]
 
     def test_install_picks_correct_platform_asset_darwin_arm64(self):
@@ -76,8 +96,14 @@ class TestPickAsset:
         # Use an os_variant that is truly not a substring of any asset name.
         # ("win" is a substring of "darwin", so we use a clearly absent token.)
         assets_no_windows = [
-            {"name": "mytool-linux-amd64.tar.gz",  "browser_download_url": "https://example.com/linux-amd64"},
-            {"name": "mytool-linux-arm64.tar.gz",   "browser_download_url": "https://example.com/linux-arm64"},
+            {
+                "name": "mytool-linux-amd64.tar.gz",
+                "browser_download_url": "https://example.com/linux-amd64",
+            },
+            {
+                "name": "mytool-linux-arm64.tar.gz",
+                "browser_download_url": "https://example.com/linux-arm64",
+            },
         ]
         asset = _pick_asset(
             assets_no_windows,
@@ -90,7 +116,7 @@ class TestPickAsset:
         """_pick_asset falls back to OS-only match when arch doesn't match."""
         assets = [
             {"name": "mytool-darwin.tar.gz", "browser_download_url": "https://example.com/darwin"},
-            {"name": "mytool-linux.tar.gz",  "browser_download_url": "https://example.com/linux"},
+            {"name": "mytool-linux.tar.gz", "browser_download_url": "https://example.com/linux"},
         ]
         asset = _pick_asset(
             assets,
@@ -103,7 +129,10 @@ class TestPickAsset:
     def test_pick_asset_skips_sig_files(self):
         """_pick_asset never returns .sig files."""
         assets_with_only_sig = [
-            {"name": "mytool-darwin-arm64.tar.gz.sig", "browser_download_url": "https://example.com/sig"},
+            {
+                "name": "mytool-darwin-arm64.tar.gz.sig",
+                "browser_download_url": "https://example.com/sig",
+            },
         ]
         asset = _pick_asset(
             assets_with_only_sig,

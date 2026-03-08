@@ -13,7 +13,6 @@ import platform
 import shutil
 import stat
 import subprocess
-import sys
 import tarfile
 import tempfile
 import zipfile
@@ -84,7 +83,7 @@ async def ensure_cli(cli_name: str) -> bool:
     raise RuntimeError(
         f"Installation of {cli_name!r} appeared to succeed but the binary "
         f"still cannot be found.  Try adding {_LOCAL_BIN} to your PATH:\n"
-        f"  export PATH=\"$HOME/.local/bin:$PATH\""
+        f'  export PATH="$HOME/.local/bin:$PATH"'
     )
 
 
@@ -175,7 +174,8 @@ async def _install_gcloud() -> None:
         result = await asyncio.create_subprocess_exec(
             str(sdk_install),
             "--quiet",
-            "--path-update", "true",
+            "--path-update",
+            "true",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -307,7 +307,10 @@ async def _install_from_github_releases(
             # Assume it's a bare binary (no archive).
             shutil.copy2(archive_path, _LOCAL_BIN / binary_name)
             (_LOCAL_BIN / binary_name).chmod(
-                (_LOCAL_BIN / binary_name).stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
+                (_LOCAL_BIN / binary_name).stat().st_mode
+                | stat.S_IEXEC
+                | stat.S_IXGRP
+                | stat.S_IXOTH
             )
             print(f"[installer] Installed {binary_name} to {_LOCAL_BIN / binary_name}")
             return
@@ -442,7 +445,10 @@ async def _try_npm(package: str) -> bool:
 
     print(f"[installer] Installing via npm: npm install -g {package}")
     proc = await asyncio.create_subprocess_exec(
-        "npm", "install", "-g", package,
+        "npm",
+        "install",
+        "-g",
+        package,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

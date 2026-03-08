@@ -11,7 +11,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-
 # ---------------------------------------------------------------------------
 # Credential dataclasses
 # ---------------------------------------------------------------------------
@@ -21,7 +20,7 @@ from dataclasses import dataclass
 class DatabaseCredentials:
     """Credentials returned after a database is provisioned."""
 
-    dsn: str          # Full connection string: postgresql://user:pass@host/db
+    dsn: str  # Full connection string: postgresql://user:pass@host/db
     host: str
     port: int
     database: str
@@ -43,7 +42,7 @@ class DatabaseCredentials:
 class StorageCredentials:
     """Credentials returned after object storage is provisioned."""
 
-    endpoint_url: str        # S3-compatible endpoint, e.g. https://...r2.cloudflarestorage.com
+    endpoint_url: str  # S3-compatible endpoint, e.g. https://...r2.cloudflarestorage.com
     access_key_id: str
     secret_access_key: str
     bucket: str
@@ -63,7 +62,7 @@ class StorageCredentials:
 class ComputeCredentials:
     """Credentials / connection info returned after compute is provisioned."""
 
-    service_url: str   # The URL Metaflow client will call, e.g. https://...run.app
+    service_url: str  # The URL Metaflow client will call, e.g. https://...run.app
     service_auth_key: str | None = None
 
     def __repr__(self) -> str:

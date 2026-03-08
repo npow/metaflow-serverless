@@ -17,19 +17,20 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-from functools import lru_cache
-import mimetypes
+import contextlib
 import json
+import mimetypes
 import os
 import re
 import shutil
 import sys
 import tarfile
 import tempfile
+import time
 import webbrowser
 import zipfile
+from functools import lru_cache
 from pathlib import Path
-import time
 from typing import Any
 
 import aiohttp
@@ -49,11 +50,19 @@ _UI_REPO = "Netflix/metaflow-ui"
 _GITHUB_API = "https://api.github.com"
 
 # Hop-by-hop headers that must not be forwarded.
-_HOP_BY_HOP = frozenset({
-    "connection", "keep-alive", "proxy-authenticate",
-    "proxy-authorization", "te", "trailers", "transfer-encoding",
-    "upgrade", "host",
-})
+_HOP_BY_HOP = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+        "host",
+    }
+)
 _RUNS_PATH_RE = re.compile(r"^/flows/[^/]+/runs(?:/[^/]+)?$")
 
 
@@ -159,6 +168,7 @@ def _build_app(
         ANY /api/{path:.*}    ->  proxy to upstream metadata service
         GET /{path:.*}        ->  serve static UI files (SPA fallback)
     """
+
     @web.middleware
     async def _log_middleware(request: web.Request, handler):
         resp = await handler(request)
@@ -253,10 +263,7 @@ async def _proxy_handler(request: web.Request) -> web.Response:
     if request.query_string:
         upstream_url = f"{upstream_url}?{request.query_string}"
 
-    forward_headers = {
-        k: v for k, v in request.headers.items()
-        if k.lower() not in _HOP_BY_HOP
-    }
+    forward_headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
     if service_auth_key:
         forward_headers["x-api-key"] = service_auth_key
 
@@ -284,8 +291,7 @@ async def _proxy_handler(request: web.Request) -> web.Response:
             ):
                 resp_body = _wrap_data_payload(resp_body)
             response_headers = {
-                k: v for k, v in upstream_resp.headers.items()
-                if k.lower() not in _HOP_BY_HOP
+                k: v for k, v in upstream_resp.headers.items() if k.lower() not in _HOP_BY_HOP
             }
             # aiohttp may decode gzip/brotli transparently; avoid mismatched
             # content-encoding/content-length on forwarded bodies.
@@ -470,12 +476,7 @@ async def _runs_autocomplete_handler(request: web.Request) -> web.Response:
     if not isinstance(runs, list):
         return web.json_response([])
 
-    needle = (
-        request.query.get("run:co")
-        or request.query.get("run")
-        or request.query.get("q")
-        or ""
-    )
+    needle = request.query.get("run:co") or request.query.get("run") or request.query.get("q") or ""
     needle = str(needle).strip()
 
     out: list[dict[str, Any]] = []
@@ -484,8 +485,10 @@ async def _runs_autocomplete_handler(request: web.Request) -> web.Response:
             continue
         run_number = run.get("run_number")
         run_id = run.get("run_id")
-        run_id_value = str(run_id) if run_id is not None else (
-            str(run_number) if run_number is not None else ""
+        run_id_value = (
+            str(run_id)
+            if run_id is not None
+            else (str(run_number) if run_number is not None else "")
         )
         if needle and needle not in run_id_value:
             continue
@@ -607,7 +610,9 @@ async def _run_tasks_handler(request: web.Request) -> web.Response:
                 if resp.status != 200:
                     continue
                 tasks_data: Any = await resp.json()
-            tasks = tasks_data.get("data", tasks_data) if isinstance(tasks_data, dict) else tasks_data
+            tasks = (
+                tasks_data.get("data", tasks_data) if isinstance(tasks_data, dict) else tasks_data
+            )
             if isinstance(tasks, list):
                 for task in tasks:
                     if not isinstance(task, dict):
@@ -630,7 +635,9 @@ async def _run_tasks_handler(request: web.Request) -> web.Response:
                     # Populate timeline fields.
                     started_at = enriched.get("ts_epoch")
                     task_id_int = enriched.get("task_id")
-                    finished_at = task_finished_at.get(task_id_int) if task_id_int is not None else None
+                    finished_at = (
+                        task_finished_at.get(task_id_int) if task_id_int is not None else None
+                    )
                     if "started_at" not in enriched:
                         enriched["started_at"] = started_at
                     if "finished_at" not in enriched:
@@ -693,7 +700,8 @@ async def _run_dag_handler(request: web.Request) -> web.Response:
         return web.json_response({"data": {}, "links": {"next": None}})
 
     logical_steps = [
-        s for s in steps
+        s
+        for s in steps
         if isinstance(s, dict) and s.get("step_name") and s.get("step_name") != "_parameters"
     ]
     logical_steps.sort(key=lambda s: _safe_ts(s.get("ts_epoch")))
@@ -718,7 +726,7 @@ async def _run_dag_handler(request: web.Request) -> web.Response:
             return 1
 
     counts_list = await asyncio.gather(*(_count_tasks_for_step(n) for n in ordered_names))
-    task_counts: dict[str, int] = dict(zip(ordered_names, counts_list))
+    task_counts: dict[str, int] = dict(zip(ordered_names, counts_list, strict=False))
 
     dag_steps: dict[str, Any] = {}
     for idx, name in enumerate(ordered_names):
@@ -783,9 +791,7 @@ async def _task_logs_handler(request: web.Request) -> web.Response:
         task_identifier=str(task_id),
     )
 
-    upstream = (
-        f"{service_url}/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks/{resolved_task_id}/logs/{stream}"
-    )
+    upstream = f"{service_url}/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks/{resolved_task_id}/logs/{stream}"
     try:
         async with session.get(
             upstream,
@@ -888,7 +894,9 @@ def _wrap_data_payload(payload: bytes) -> bytes:
                 pass
         return payload
     try:
-        return json.dumps({"data": data, "links": {"next": None}}, separators=(",", ":")).encode("utf-8")
+        return json.dumps({"data": data, "links": {"next": None}}, separators=(",", ":")).encode(
+            "utf-8"
+        )
     except Exception:
         return payload
 
@@ -978,7 +986,7 @@ async def _read_s3_task_log(
 
     # ds-root is like "s3://bucket/prefix".  Strip the s3:// scheme.
     # Log object path: {ds-root}/data/{sha[:2]}/{sha[2:]}
-    s3_path = ds_root.lstrip("s3://")
+    s3_path = ds_root.removeprefix("s3://")
     parts = s3_path.split("/", 1)
     if len(parts) != 2:
         return None
@@ -992,8 +1000,9 @@ async def _read_s3_task_log(
 
     # Try boto3 first (works for standard S3-compatible endpoints).
     try:
-        import boto3  # type: ignore
         import asyncio
+
+        import boto3  # type: ignore
 
         def _boto_get() -> bytes:
             kwargs: dict[str, Any] = {"region_name": region}
@@ -1009,6 +1018,7 @@ async def _read_s3_task_log(
         raw = await asyncio.to_thread(_boto_get)
         try:
             import gzip
+
             raw = gzip.decompress(raw)
         except Exception:
             pass
@@ -1035,6 +1045,7 @@ async def _read_s3_task_log(
                     raw = await resp.read()
                     try:
                         import gzip
+
                         raw = gzip.decompress(raw)
                     except Exception:
                         pass
@@ -1092,9 +1103,13 @@ async def _task_attempts_handler(request: web.Request) -> web.Response:
 
     task_url = f"{service_url}/flows/{flow_id}/runs/{run_id}/steps/{step_name}/tasks/{resolved_id}"
     try:
-        async with session.get(task_url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as r:
+        async with session.get(
+            task_url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)
+        ) as r:
             raw_task: Any = await r.json() if r.status == 200 else {}
-        async with session.get(f"{task_url}/metadata", headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as r:
+        async with session.get(
+            f"{task_url}/metadata", headers=headers, timeout=aiohttp.ClientTimeout(total=15)
+        ) as r:
             raw_meta: Any = await r.json() if r.status == 200 else {}
     except Exception:
         return web.json_response({"data": [], "links": {"next": None}})
@@ -1116,12 +1131,10 @@ async def _task_attempts_handler(request: web.Request) -> web.Response:
     by_attempt: dict[int, dict[str, Any]] = {}
     for entry in meta_entries:
         aid = 0
-        for tag in (entry.get("tags") or []):
+        for tag in entry.get("tags") or []:
             if tag.startswith("attempt_id:"):
-                try:
+                with contextlib.suppress(IndexError, ValueError):
                     aid = int(tag.split(":", 1)[1])
-                except (IndexError, ValueError):
-                    pass
         if aid not in by_attempt:
             by_attempt[aid] = {}
         by_attempt[aid][entry.get("field_name", "")] = entry
@@ -1142,23 +1155,25 @@ async def _task_attempts_handler(request: web.Request) -> web.Response:
             status = "failed"
         else:
             status = "running"
-        attempts.append({
-            "flow_id": flow_id,
-            "run_number": task.get("run_number"),
-            "run_id": str(run_id),
-            "step_name": step_name,
-            "task_id": task.get("task_id"),
-            "task_name": task.get("task_name") or task_id,
-            "attempt_id": aid,
-            "ts_epoch": started_at,
-            "started_at": started_at,
-            "finished_at": finished_at,
-            "duration": (finished_at - started_at) if (finished_at and started_at) else None,
-            "status": status,
-            "user_name": task.get("user_name"),
-            "tags": task.get("tags", []),
-            "system_tags": task.get("system_tags", []),
-        })
+        attempts.append(
+            {
+                "flow_id": flow_id,
+                "run_number": task.get("run_number"),
+                "run_id": str(run_id),
+                "step_name": step_name,
+                "task_id": task.get("task_id"),
+                "task_name": task.get("task_name") or task_id,
+                "attempt_id": aid,
+                "ts_epoch": started_at,
+                "started_at": started_at,
+                "finished_at": finished_at,
+                "duration": (finished_at - started_at) if (finished_at and started_at) else None,
+                "status": status,
+                "user_name": task.get("user_name"),
+                "tags": task.get("tags", []),
+                "system_tags": task.get("system_tags", []),
+            }
+        )
 
     return web.json_response({"data": attempts, "links": {"next": None}})
 
@@ -1280,7 +1295,7 @@ def _get_gha_log_reader() -> tuple[Any, str, str, Any] | None:
     """
     try:
         import boto3  # type: ignore
-        from metaflow_coordinator.s3_queue import read_task_log, _bucket_prefix_from_env
+        from metaflow_coordinator.s3_queue import _bucket_prefix_from_env, read_task_log
     except Exception:
         return None
 
@@ -1338,7 +1353,11 @@ async def _infer_task_status(
             ) as resp:
                 if resp.status == 200:
                     meta_data: Any = await resp.json()
-                    entries = meta_data.get("data", meta_data) if isinstance(meta_data, dict) else meta_data
+                    entries = (
+                        meta_data.get("data", meta_data)
+                        if isinstance(meta_data, dict)
+                        else meta_data
+                    )
                     if isinstance(entries, list):
                         attempt_ok = None
                         for item in entries:
@@ -1463,7 +1482,9 @@ async def _fetch_active_state(
                         continue
                     runs_data: dict[str, Any] = await runs_resp.json()
 
-                runs = runs_data.get("data", runs_data) if isinstance(runs_data, dict) else runs_data
+                runs = (
+                    runs_data.get("data", runs_data) if isinstance(runs_data, dict) else runs_data
+                )
                 if not isinstance(runs, list):
                     continue
 
@@ -1471,6 +1492,7 @@ async def _fetch_active_state(
                     last_hb = run.get("last_heartbeat_ts") or run.get("ts_epoch", 0)
                     # Include runs with a heartbeat within the last 300 seconds.
                     import time
+
                     if isinstance(last_hb, (int, float)) and (time.time() - last_hb / 1000) < 300:
                         run_id = f"{flow_id}/{run.get('run_number') or run.get('run_id')}"
                         active_state[run_id] = run
@@ -1532,14 +1554,16 @@ async def _ensure_ui_assets() -> Path:
     download_url: str = release_info["download_url"]
     asset_name: str = release_info["name"]
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
+    async with (
+        aiohttp.ClientSession() as session,
+        session.get(
             download_url,
             allow_redirects=True,
             timeout=aiohttp.ClientTimeout(total=120),
-        ) as resp:
-            resp.raise_for_status()
-            data = await resp.read()
+        ) as resp,
+    ):
+        resp.raise_for_status()
+        data = await resp.read()
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -1554,16 +1578,12 @@ async def _ensure_ui_assets() -> Path:
             with zipfile.ZipFile(archive_path, "r") as zf:
                 zf.extractall(tmp_path)
         else:
-            raise RuntimeError(
-                f"Unexpected Metaflow UI archive format: {asset_name!r}"
-            )
+            raise RuntimeError(f"Unexpected Metaflow UI archive format: {asset_name!r}")
 
         # Find the index.html in the extracted files.
         index_candidates = list(tmp_path.rglob("index.html"))
         if not index_candidates:
-            raise RuntimeError(
-                "Could not find index.html in the downloaded Metaflow UI archive."
-            )
+            raise RuntimeError("Could not find index.html in the downloaded Metaflow UI archive.")
 
         # Use the shallowest index.html (i.e. the build root).
         build_root = min(index_candidates, key=lambda p: len(p.parts)).parent
@@ -1593,18 +1613,18 @@ async def _fetch_latest_ui_release() -> dict[str, str]:
     """
     url = f"{_GITHUB_API}/repos/{_UI_REPO}/releases/latest"
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
+    async with (
+        aiohttp.ClientSession() as session,
+        session.get(
             url,
             headers={"Accept": "application/vnd.github+json"},
             timeout=aiohttp.ClientTimeout(total=30),
-        ) as resp:
-            if resp.status == 404:
-                raise RuntimeError(
-                    f"Metaflow UI GitHub repository {_UI_REPO!r} not found."
-                )
-            resp.raise_for_status()
-            release: dict[str, Any] = await resp.json()
+        ) as resp,
+    ):
+        if resp.status == 404:
+            raise RuntimeError(f"Metaflow UI GitHub repository {_UI_REPO!r} not found.")
+        resp.raise_for_status()
+        release: dict[str, Any] = await resp.json()
 
     tag: str = release.get("tag_name", "unknown")
     assets: list[dict[str, Any]] = release.get("assets", [])
@@ -1613,9 +1633,8 @@ async def _fetch_latest_ui_release() -> dict[str, str]:
     build_asset = None
     for asset in assets:
         name: str = asset["name"].lower()
-        if (
-            ("build" in name or "dist" in name or "ui" in name)
-            and (name.endswith(".tar.gz") or name.endswith(".zip") or name.endswith(".tgz"))
+        if ("build" in name or "dist" in name or "ui" in name) and (
+            name.endswith(".tar.gz") or name.endswith(".zip") or name.endswith(".tgz")
         ):
             build_asset = asset
             break

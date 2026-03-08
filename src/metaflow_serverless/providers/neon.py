@@ -61,9 +61,7 @@ class NeonProvider(DatabaseProvider):
         console.print("[bold]Opening browser for Neon login...[/bold]")
         rc, stdout, stderr = await _run_async(["neonctl", "auth"])
         if rc != 0:
-            raise RuntimeError(
-                f"Neon authentication failed (exit {rc}):\n{stderr.strip()}"
-            )
+            raise RuntimeError(f"Neon authentication failed (exit {rc}):\n{stderr.strip()}")
         console.print("[green]Neon authentication successful.[/green]")
 
     async def provision(self, project_name: str) -> DatabaseCredentials:
@@ -87,18 +85,14 @@ class NeonProvider(DatabaseProvider):
         await self.ensure_cli_installed()
 
         # Check for an existing project with this name.
-        rc, stdout, stderr = await _run_async(
-            ["neonctl", "projects", "list", "--output", "json"]
-        )
+        rc, stdout, stderr = await _run_async(["neonctl", "projects", "list", "--output", "json"])
         existing_id: str | None = None
         if rc == 0 and stdout.strip():
             try:
                 projects = json.loads(stdout)
                 # neonctl returns {"projects": [...]} or a bare list.
                 project_list = (
-                    projects
-                    if isinstance(projects, list)
-                    else projects.get("projects", [])
+                    projects if isinstance(projects, list) else projects.get("projects", [])
                 )
                 for proj in project_list:
                     if proj.get("name") == project_name:
@@ -110,25 +104,26 @@ class NeonProvider(DatabaseProvider):
         if existing_id:
             project_id = existing_id
             console.print(
-                f"[yellow]Reusing existing Neon project:[/yellow] "
-                f"{project_name!r} ({project_id})"
+                f"[yellow]Reusing existing Neon project:[/yellow] {project_name!r} ({project_id})"
             )
         else:
-            console.print(
-                f"[bold]Creating Neon project:[/bold] {project_name!r}"
-            )
+            console.print(f"[bold]Creating Neon project:[/bold] {project_name!r}")
             rc, stdout, stderr = await _run_async(
                 [
-                    "neonctl", "projects", "create",
-                    "--name", project_name,
-                    "--region-id", "aws-us-east-2",
-                    "--output", "json",
+                    "neonctl",
+                    "projects",
+                    "create",
+                    "--name",
+                    project_name,
+                    "--region-id",
+                    "aws-us-east-2",
+                    "--output",
+                    "json",
                 ]
             )
             if rc != 0:
                 raise RuntimeError(
-                    f"Failed to create Neon project {project_name!r} "
-                    f"(exit {rc}):\n{stderr.strip()}"
+                    f"Failed to create Neon project {project_name!r} (exit {rc}):\n{stderr.strip()}"
                 )
             try:
                 create_data = json.loads(stdout)
@@ -140,14 +135,15 @@ class NeonProvider(DatabaseProvider):
                 ) from exc
 
         # Retrieve the primary branch connection string.
-        console.print(
-            f"[bold]Retrieving connection string for project[/bold] {project_id}"
-        )
+        console.print(f"[bold]Retrieving connection string for project[/bold] {project_id}")
         rc, stdout, stderr = await _run_async(
             [
-                "neonctl", "connection-string",
-                "--project-id", project_id,
-                "--output", "json",
+                "neonctl",
+                "connection-string",
+                "--project-id",
+                project_id,
+                "--output",
+                "json",
             ]
         )
         if rc != 0:
@@ -160,18 +156,12 @@ class NeonProvider(DatabaseProvider):
         raw = stdout.strip()
         try:
             conn_data = json.loads(raw)
-            dsn = (
-                conn_data
-                if isinstance(conn_data, str)
-                else conn_data.get("uri", "")
-            )
+            dsn = conn_data if isinstance(conn_data, str) else conn_data.get("uri", "")
         except json.JSONDecodeError:
             dsn = raw.strip('"')
 
         if not dsn.startswith("postgresql://") and not dsn.startswith("postgres://"):
-            raise RuntimeError(
-                f"neonctl returned an unexpected connection string: {dsn!r}"
-            )
+            raise RuntimeError(f"neonctl returned an unexpected connection string: {dsn!r}")
 
         parsed = urlparse(dsn)
         return DatabaseCredentials(

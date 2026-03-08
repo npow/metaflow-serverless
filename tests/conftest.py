@@ -1,11 +1,11 @@
 """
 Shared pytest fixtures for the metaflow-ephemeral-service test suite.
 """
+
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -21,7 +21,6 @@ def tmp_home(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     monkeypatch.setattr(Path, "home", lambda: fake_home)
-    import os
     monkeypatch.setenv("HOME", str(fake_home))
     return fake_home
 

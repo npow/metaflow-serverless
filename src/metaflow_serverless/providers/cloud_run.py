@@ -77,24 +77,16 @@ class CloudRunProvider(ComputeProvider):
         Credentials used by client libraries).
         """
         await self.ensure_cli_installed()
-        console.print(
-            "[bold]Opening browser for Google Cloud login...[/bold]"
-        )
+        console.print("[bold]Opening browser for Google Cloud login...[/bold]")
 
         # User account login.
-        rc, stdout, stderr = await _run_async(
-            ["gcloud", "auth", "login", "--brief"]
-        )
+        rc, stdout, stderr = await _run_async(["gcloud", "auth", "login", "--brief"])
         if rc != 0:
-            raise RuntimeError(
-                f"gcloud auth login failed (exit {rc}):\n{stderr.strip()}"
-            )
+            raise RuntimeError(f"gcloud auth login failed (exit {rc}):\n{stderr.strip()}")
         console.print("[green]Google Cloud login successful.[/green]")
 
         # Application Default Credentials (non-fatal if it fails).
-        rc_adc, _, _ = await _run_async(
-            ["gcloud", "auth", "application-default", "login"]
-        )
+        rc_adc, _, _ = await _run_async(["gcloud", "auth", "application-default", "login"])
         if rc_adc != 0:
             console.print(
                 "[yellow]Warning: Application Default Credentials could not be "
@@ -103,13 +95,10 @@ class CloudRunProvider(ComputeProvider):
 
     async def _get_project_id(self) -> str:
         """Return the currently active GCP project ID."""
-        rc, stdout, stderr = await _run_async(
-            ["gcloud", "config", "get-value", "project"]
-        )
+        rc, stdout, stderr = await _run_async(["gcloud", "config", "get-value", "project"])
         if rc != 0 or not stdout.strip():
             raise RuntimeError(
-                "No GCP project configured. Run:\n"
-                "  gcloud config set project YOUR_PROJECT_ID"
+                "No GCP project configured. Run:\n  gcloud config set project YOUR_PROJECT_ID"
             )
         return stdout.strip()
 
@@ -122,16 +111,19 @@ class CloudRunProvider(ComputeProvider):
         for api in apis:
             rc, _, _ = await _run_async(
                 [
-                    "gcloud", "services", "enable", api,
-                    "--project", project_id,
+                    "gcloud",
+                    "services",
+                    "enable",
+                    api,
+                    "--project",
+                    project_id,
                     "--quiet",
                 ]
             )
             if rc != 0:
                 # Non-fatal: the API might already be enabled.
                 console.print(
-                    f"[yellow]Note: could not enable {api!r} "
-                    f"(may already be enabled).[/yellow]"
+                    f"[yellow]Note: could not enable {api!r} (may already be enabled).[/yellow]"
                 )
 
     async def provision(
@@ -160,16 +152,13 @@ class CloudRunProvider(ComputeProvider):
         await self.ensure_cli_installed()
 
         project_id = await self._get_project_id()
-        console.print(
-            f"[bold]Enabling Cloud Run APIs for project[/bold] {project_id!r}..."
-        )
+        console.print(f"[bold]Enabling Cloud Run APIs for project[/bold] {project_id!r}...")
         await self._enable_apis(project_id)
 
         # Sanitise service name: lowercase, hyphens only, max 49 chars.
         service_name = f"mf-{project_name.lower().replace('_', '-')}"[:49]
         console.print(
-            f"[bold]Deploying Cloud Run service:[/bold] {service_name!r} "
-            f"(image: {_METADATA_IMAGE})"
+            f"[bold]Deploying Cloud Run service:[/bold] {service_name!r} (image: {_METADATA_IMAGE})"
         )
 
         env_vars = ",".join(
@@ -185,22 +174,30 @@ class CloudRunProvider(ComputeProvider):
 
         rc, stdout, stderr = await _run_async(
             [
-                "gcloud", "run", "deploy", service_name,
-                "--image", _METADATA_IMAGE,
-                "--platform", "managed",
-                "--region", self._DEFAULT_REGION,
-                "--project", project_id,
+                "gcloud",
+                "run",
+                "deploy",
+                service_name,
+                "--image",
+                _METADATA_IMAGE,
+                "--platform",
+                "managed",
+                "--region",
+                self._DEFAULT_REGION,
+                "--project",
+                project_id,
                 "--allow-unauthenticated",
-                "--port", "8080",
-                "--set-env-vars", env_vars,
-                "--format", "json",
+                "--port",
+                "8080",
+                "--set-env-vars",
+                env_vars,
+                "--format",
+                "json",
                 "--quiet",
             ]
         )
         if rc != 0:
-            raise RuntimeError(
-                f"Cloud Run deployment failed (exit {rc}):\n{stderr.strip()}"
-            )
+            raise RuntimeError(f"Cloud Run deployment failed (exit {rc}):\n{stderr.strip()}")
 
         # Parse the deployed service URL from the gcloud output.
         service_url: str = ""
@@ -212,33 +209,35 @@ class CloudRunProvider(ComputeProvider):
 
         if not service_url:
             # Fall back to querying the service description.
-            console.print(
-                "[bold]Querying service URL...[/bold]"
-            )
+            console.print("[bold]Querying service URL...[/bold]")
             rc2, stdout2, stderr2 = await _run_async(
                 [
-                    "gcloud", "run", "services", "describe", service_name,
-                    "--platform", "managed",
-                    "--region", self._DEFAULT_REGION,
-                    "--project", project_id,
-                    "--format", "json",
+                    "gcloud",
+                    "run",
+                    "services",
+                    "describe",
+                    service_name,
+                    "--platform",
+                    "managed",
+                    "--region",
+                    self._DEFAULT_REGION,
+                    "--project",
+                    project_id,
+                    "--format",
+                    "json",
                 ]
             )
             if rc2 != 0:
                 raise RuntimeError(
-                    f"Could not retrieve Cloud Run service URL (exit {rc2}):\n"
-                    f"{stderr2.strip()}"
+                    f"Could not retrieve Cloud Run service URL (exit {rc2}):\n{stderr2.strip()}"
                 )
             try:
                 describe_data = json.loads(stdout2)
                 service_url = describe_data["status"]["url"]
             except (json.JSONDecodeError, KeyError) as exc:
                 raise RuntimeError(
-                    f"Could not parse service URL from gcloud describe output:\n"
-                    f"{stdout2}"
+                    f"Could not parse service URL from gcloud describe output:\n{stdout2}"
                 ) from exc
 
-        console.print(
-            f"[green]Cloud Run service deployed:[/green] {service_url}"
-        )
+        console.print(f"[green]Cloud Run service deployed:[/green] {service_url}")
         return ComputeCredentials(service_url=service_url)

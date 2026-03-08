@@ -1,6 +1,7 @@
 """
 Tests for metaflow_serverless.providers.registry.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -10,11 +11,11 @@ from metaflow_serverless.providers.registry import (
     COMPUTE_PROVIDERS,
     DATABASE_PROVIDERS,
     STORAGE_PROVIDERS,
-    get_database_provider,
-    get_storage_provider,
-    get_compute_provider,
     compatible_databases,
     compatible_storage,
+    get_compute_provider,
+    get_database_provider,
+    get_storage_provider,
 )
 
 

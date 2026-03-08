@@ -81,13 +81,15 @@ async def _install_ccloud() -> None:
                 asset_url: str | None = None
                 for asset in assets:
                     name: str = asset.get("name", "").lower()
-                    if os_token in name and arch_token in name:
-                        if not any(
-                            name.endswith(ext)
-                            for ext in (".sha256", ".sig", ".asc", ".md5")
-                        ):
-                            asset_url = asset["browser_download_url"]
-                            break
+                    if (
+                        os_token in name
+                        and arch_token in name
+                        and not any(
+                            name.endswith(ext) for ext in (".sha256", ".sig", ".asc", ".md5")
+                        )
+                    ):
+                        asset_url = asset["browser_download_url"]
+                        break
             else:
                 asset_url = None
         except Exception:
@@ -118,7 +120,8 @@ async def _install_ccloud() -> None:
         archive_path.write_bytes(data)
 
         # Extract.
-        import tarfile, zipfile
+        import tarfile
+        import zipfile
 
         if asset_name.endswith(".tar.gz") or asset_name.endswith(".tgz"):
             with tarfile.open(archive_path, "r:gz") as tf:
@@ -129,6 +132,7 @@ async def _install_ccloud() -> None:
         else:
             # Bare binary.
             import shutil as _shutil
+
             _shutil.copy2(archive_path, dest)
             dest.chmod(dest.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
             console.print(f"[green]ccloud installed to[/green] {dest}")
@@ -141,11 +145,10 @@ async def _install_ccloud() -> None:
                 binary_path = candidate
                 break
         if binary_path is None:
-            raise RuntimeError(
-                f"Could not find 'ccloud' binary inside archive {asset_name!r}."
-            )
+            raise RuntimeError(f"Could not find 'ccloud' binary inside archive {asset_name!r}.")
 
         import shutil as _shutil
+
         _shutil.copy2(binary_path, dest)
         dest.chmod(dest.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
@@ -153,6 +156,7 @@ async def _install_ccloud() -> None:
 
     # Ensure ~/.local/bin is on PATH for the current process.
     import os
+
     local_bin_str = str(local_bin)
     current_path = os.environ.get("PATH", "")
     if local_bin_str not in current_path.split(os.pathsep):
@@ -178,15 +182,13 @@ class CockroachDBProvider(DatabaseProvider):
         """Install the ccloud CLI if it is not already on the PATH."""
         if shutil.which("ccloud"):
             return
-        console.print(
-            "[bold]ccloud[/bold] not found on PATH; attempting installation..."
-        )
+        console.print("[bold]ccloud[/bold] not found on PATH; attempting installation...")
         await _install_ccloud()
         if not shutil.which("ccloud"):
             raise RuntimeError(
                 "ccloud installation appeared to succeed but the binary still "
                 "cannot be found. Try adding ~/.local/bin to your PATH:\n"
-                "  export PATH=\"$HOME/.local/bin:$PATH\""
+                '  export PATH="$HOME/.local/bin:$PATH"'
             )
 
     async def login(self) -> None:
@@ -202,36 +204,23 @@ class CockroachDBProvider(DatabaseProvider):
         """
         await self.ensure_cli_installed()
 
-        console.print(
-            "[bold]Logging in to CockroachDB Cloud "
-            "(opening browser)...[/bold]"
-        )
+        console.print("[bold]Logging in to CockroachDB Cloud (opening browser)...[/bold]")
 
         # First, try the interactive browser-based flow.
         rc, stdout, stderr = await _run_async(["ccloud", "auth", "login"])
         if rc == 0:
-            console.print(
-                "[green]CockroachDB Cloud login successful.[/green]"
-            )
+            console.print("[green]CockroachDB Cloud login successful.[/green]")
             return
 
         # If the browser flow failed (e.g. headless environment), fall back to
         # the no-redirect (copy-paste URL) flow.
         console.print(
-            f"[yellow]Browser login failed (exit {rc}); "
-            "trying --no-redirect flow...[/yellow]"
+            f"[yellow]Browser login failed (exit {rc}); trying --no-redirect flow...[/yellow]"
         )
-        rc2, stdout2, stderr2 = await _run_async(
-            ["ccloud", "auth", "login", "--no-redirect"]
-        )
+        rc2, stdout2, stderr2 = await _run_async(["ccloud", "auth", "login", "--no-redirect"])
         if rc2 != 0:
-            raise RuntimeError(
-                f"CockroachDB Cloud login failed (exit {rc2}):\n"
-                f"{stderr2.strip()}"
-            )
-        console.print(
-            "[green]CockroachDB Cloud login successful.[/green]"
-        )
+            raise RuntimeError(f"CockroachDB Cloud login failed (exit {rc2}):\n{stderr2.strip()}")
+        console.print("[green]CockroachDB Cloud login successful.[/green]")
 
     async def provision(self, project_name: str) -> DatabaseCredentials:
         """
@@ -254,18 +243,14 @@ class CockroachDBProvider(DatabaseProvider):
         await self.ensure_cli_installed()
 
         # Check whether a cluster with this name already exists.
-        rc, stdout, stderr = await _run_async(
-            ["ccloud", "cluster", "list", "--output", "json"]
-        )
+        rc, stdout, stderr = await _run_async(["ccloud", "cluster", "list", "--output", "json"])
         existing_id: str | None = None
         if rc == 0 and stdout.strip():
             try:
                 clusters = json.loads(stdout)
                 # ccloud returns a list or {"clusters": [...]}
                 cluster_list = (
-                    clusters
-                    if isinstance(clusters, list)
-                    else clusters.get("clusters", [])
+                    clusters if isinstance(clusters, list) else clusters.get("clusters", [])
                 )
                 for cluster in cluster_list:
                     if cluster.get("name") == project_name:
@@ -281,17 +266,22 @@ class CockroachDBProvider(DatabaseProvider):
             )
             cluster_id = existing_id
         else:
-            console.print(
-                f"[bold]Creating CockroachDB cluster:[/bold] {project_name!r}"
-            )
+            console.print(f"[bold]Creating CockroachDB cluster:[/bold] {project_name!r}")
             rc, stdout, stderr = await _run_async(
                 [
-                    "ccloud", "cluster", "create",
-                    "--name", project_name,
-                    "--cloud", "GCP",
-                    "--region", "us-east1",
-                    "--plan", "BASIC",
-                    "--output", "json",
+                    "ccloud",
+                    "cluster",
+                    "create",
+                    "--name",
+                    project_name,
+                    "--cloud",
+                    "GCP",
+                    "--region",
+                    "us-east1",
+                    "--plan",
+                    "BASIC",
+                    "--output",
+                    "json",
                 ]
             )
             if rc != 0:
@@ -315,20 +305,19 @@ class CockroachDBProvider(DatabaseProvider):
                     f"Unexpected output from 'ccloud cluster create':\n{stdout}"
                 ) from exc
 
-            console.print(
-                "[bold]Waiting for cluster to become ready...[/bold]"
-            )
+            console.print("[bold]Waiting for cluster to become ready...[/bold]")
             await self._wait_for_cluster(cluster_id)
 
         # Retrieve the connection string.
-        console.print(
-            f"[bold]Retrieving connection string for cluster[/bold] {cluster_id}"
-        )
+        console.print(f"[bold]Retrieving connection string for cluster[/bold] {cluster_id}")
         rc, stdout, stderr = await _run_async(
             [
-                "ccloud", "cluster", "connection-string",
+                "ccloud",
+                "cluster",
+                "connection-string",
                 cluster_id,
-                "--output", "json",
+                "--output",
+                "json",
             ]
         )
         if rc != 0:
@@ -351,9 +340,7 @@ class CockroachDBProvider(DatabaseProvider):
             dsn = stdout.strip().strip('"')
 
         if not dsn.startswith("postgresql://") and not dsn.startswith("postgres://"):
-            raise RuntimeError(
-                f"ccloud returned an unexpected connection string: {dsn!r}"
-            )
+            raise RuntimeError(f"ccloud returned an unexpected connection string: {dsn!r}")
 
         parsed = urlparse(dsn)
         return DatabaseCredentials(
@@ -385,11 +372,7 @@ class CockroachDBProvider(DatabaseProvider):
             if rc == 0 and stdout.strip():
                 try:
                     data = json.loads(stdout)
-                    cluster_obj = (
-                        data.get("cluster", data)
-                        if isinstance(data, dict)
-                        else data
-                    )
+                    cluster_obj = data.get("cluster", data) if isinstance(data, dict) else data
                     state: str = cluster_obj.get("state", "")
                     if state == "CREATED":
                         return

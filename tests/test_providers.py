@@ -4,34 +4,30 @@ Tests for provider base attributes and credential dataclasses.
 These tests only check metadata (name, display_name, requires_cc, verification)
 without making any network or CLI calls.
 """
+
 from __future__ import annotations
 
-import pytest
-
+from metaflow_serverless.providers.backblaze_b2 import BackblazeB2Provider
 from metaflow_serverless.providers.base import (
+    ComputeCredentials,
     DatabaseCredentials,
     StorageCredentials,
-    ComputeCredentials,
-    DatabaseProvider,
-    StorageProvider,
-    ComputeProvider,
 )
+from metaflow_serverless.providers.cloud_run import CloudRunProvider
+from metaflow_serverless.providers.cloudflare_r2 import CloudflareR2Provider
+from metaflow_serverless.providers.cockroachdb import CockroachDBProvider
+from metaflow_serverless.providers.neon import NeonProvider
+from metaflow_serverless.providers.render import RenderProvider
 from metaflow_serverless.providers.supabase import (
+    SupabaseComputeProvider,
     SupabaseDatabaseProvider,
     SupabaseStorageProvider,
-    SupabaseComputeProvider,
 )
-from metaflow_serverless.providers.neon import NeonProvider
-from metaflow_serverless.providers.cockroachdb import CockroachDBProvider
-from metaflow_serverless.providers.cloudflare_r2 import CloudflareR2Provider
-from metaflow_serverless.providers.backblaze_b2 import BackblazeB2Provider
-from metaflow_serverless.providers.cloud_run import CloudRunProvider
-from metaflow_serverless.providers.render import RenderProvider
-
 
 # ---------------------------------------------------------------------------
 # Helper to check provider attributes have correct types
 # ---------------------------------------------------------------------------
+
 
 def _check_provider_attrs(provider_instance):
     """Assert that a provider has all required typed attributes."""
@@ -40,14 +36,15 @@ def _check_provider_attrs(provider_instance):
     assert isinstance(provider_instance.requires_cc, bool), "requires_cc must be bool"
     assert isinstance(provider_instance.verification, str), "verification must be str"
     # cli_name may be str or None
-    assert provider_instance.cli_name is None or isinstance(
-        provider_instance.cli_name, str
-    ), "cli_name must be str or None"
+    assert provider_instance.cli_name is None or isinstance(provider_instance.cli_name, str), (
+        "cli_name must be str or None"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Database providers
 # ---------------------------------------------------------------------------
+
 
 class TestSupabaseDatabaseProvider:
     def test_attributes_exist_and_have_correct_types(self):
@@ -101,6 +98,7 @@ class TestCockroachDBProvider:
 # Storage providers
 # ---------------------------------------------------------------------------
 
+
 class TestSupabaseStorageProvider:
     def test_attributes_exist_and_have_correct_types(self):
         p = SupabaseStorageProvider()
@@ -153,6 +151,7 @@ class TestBackblazeB2Provider:
 # Compute providers
 # ---------------------------------------------------------------------------
 
+
 class TestSupabaseComputeProvider:
     def test_attributes_exist_and_have_correct_types(self):
         p = SupabaseComputeProvider()
@@ -204,6 +203,7 @@ class TestRenderProvider:
 # ---------------------------------------------------------------------------
 # Credential dataclasses
 # ---------------------------------------------------------------------------
+
 
 class TestDatabaseCredentials:
     def test_credentials_repr_masks_password(self):

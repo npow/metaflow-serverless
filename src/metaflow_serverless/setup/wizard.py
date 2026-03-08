@@ -9,6 +9,7 @@ migrations, and writing the resulting configuration to ~/.metaflowconfig.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -31,7 +32,6 @@ from ..providers.base import (
     StorageCredentials,
 )
 from ..providers.registry import (
-    COMPATIBLE_STACKS,
     COMPUTE_PROVIDERS,
     DATABASE_PROVIDERS,
     STORAGE_PROVIDERS,
@@ -48,6 +48,7 @@ console = Console()
 @dataclass
 class _ProviderMeta:
     """Metadata about a provider for display in the wizard."""
+
     name: str
     display_name: str
     requires_cc: bool
@@ -115,10 +116,7 @@ def _db_choice_title(m: _ProviderMeta) -> str:
 def _storage_choice_title(m: _ProviderMeta) -> str:
     hint = _STORAGE_HINTS.get(m.name, "")
     override = _STORAGE_CC_OVERRIDES.get(m.name)
-    if override is not None:
-        badge = override
-    else:
-        badge = _cc_badge(m.requires_cc)
+    badge = override if override is not None else _cc_badge(m.requires_cc)
     return f"{m.display_name}{badge} · {hint}" if hint else f"{m.display_name}{badge}"
 
 
@@ -143,17 +141,13 @@ class SetupWizard:
 
     def __init__(self, config_path: str | None = None) -> None:
         from pathlib import Path
-        self._config = MetaflowConfig(
-            path=Path(config_path) if config_path else None
-        )
+
+        self._config = MetaflowConfig(path=Path(config_path) if config_path else None)
 
     async def run(self) -> None:
         """Run the full wizard flow."""
         if questionary is None:
-            console.print(
-                "[red]questionary is not installed.[/red] "
-                "Run: pip install questionary"
-            )
+            console.print("[red]questionary is not installed.[/red] Run: pip install questionary")
             sys.exit(1)
 
         self._print_banner()
@@ -174,9 +168,7 @@ class SetupWizard:
 
         confirmed = await asyncio.get_event_loop().run_in_executor(
             None,
-            lambda: questionary.confirm(
-                "Proceed with provisioning?", default=True
-            ).ask(),
+            lambda: questionary.confirm("Proceed with provisioning?", default=True).ask(),
         )
         if not confirmed:
             console.print("[yellow]Setup cancelled.[/yellow]")
@@ -233,9 +225,7 @@ class SetupWizard:
             try:
                 return await coro
             except Exception as exc:
-                console.print(
-                    f"\n[red bold]Error during {step_name}:[/red bold] {exc}"
-                )
+                console.print(f"\n[red bold]Error during {step_name}:[/red bold] {exc}")
                 if questionary is not None:
                     action = await asyncio.get_event_loop().run_in_executor(
                         None,
@@ -306,8 +296,7 @@ class SetupWizard:
         # ---- Compute -------------------------------------------------------
         compute_metas = _provider_meta_list(COMPUTE_PROVIDERS)
         compute_choices = [
-            Choice(title=_compute_choice_title(m), value=m.name)
-            for m in compute_metas
+            Choice(title=_compute_choice_title(m), value=m.name) for m in compute_metas
         ]
         compute_name: str = await loop.run_in_executor(
             None,
@@ -324,10 +313,7 @@ class SetupWizard:
         compat_db_names = compatible_databases(compute_name)
         db_registry = {k: v for k, v in DATABASE_PROVIDERS.items() if k in compat_db_names}
         db_metas = _provider_meta_list(db_registry)
-        db_choices = [
-            Choice(title=_db_choice_title(m), value=m.name)
-            for m in db_metas
-        ]
+        db_choices = [Choice(title=_db_choice_title(m), value=m.name) for m in db_metas]
         db_name: str = await loop.run_in_executor(
             None,
             lambda: questionary.select(
@@ -344,8 +330,7 @@ class SetupWizard:
         storage_registry = {k: v for k, v in STORAGE_PROVIDERS.items() if k in compat_storage_names}
         storage_metas = _provider_meta_list(storage_registry)
         storage_choices = [
-            Choice(title=_storage_choice_title(m), value=m.name)
-            for m in storage_metas
+            Choice(title=_storage_choice_title(m), value=m.name) for m in storage_metas
         ]
         storage_name: str = await loop.run_in_executor(
             None,
@@ -386,8 +371,7 @@ class SetupWizard:
             creds = await provider.provision(project_name)
 
         console.print(
-            f"[green]Database provisioned:[/green] "
-            f"host={creds.host}, db={creds.database}"
+            f"[green]Database provisioned:[/green] host={creds.host}, db={creds.database}"
         )
         return creds
 
@@ -441,10 +425,7 @@ class SetupWizard:
         ):
             creds = await provider.provision(db_creds, project_name)
 
-        console.print(
-            f"[green]Compute provisioned:[/green] "
-            f"service_url={creds.service_url}"
-        )
+        console.print(f"[green]Compute provisioned:[/green] service_url={creds.service_url}")
         return creds
 
     async def _run_migrations(
@@ -493,9 +474,7 @@ class SetupWizard:
             config_data["METAFLOW_SERVICE_AUTH_KEY"] = compute.service_auth_key
 
         self._config.write(config_data)
-        console.print(
-            f"\n[green]Configuration written to[/green] {self._config.path}"
-        )
+        console.print(f"\n[green]Configuration written to[/green] {self._config.path}")
 
     def _print_summary(
         self,
@@ -542,7 +521,7 @@ async def _run_migrations_asyncpg(dsn: str) -> None:
             "Install it with: pip install asyncpg"
         ) from exc
 
-    from ..sql.loader import load_schema, load_procedures
+    from ..sql.loader import load_procedures, load_schema
 
     conn = await asyncpg.connect(dsn)
     try:
@@ -550,10 +529,8 @@ async def _run_migrations_asyncpg(dsn: str) -> None:
         await conn.execute(load_procedures())
         # PostgREST (used behind Supabase REST endpoints) caches schema.
         # Reload so newly created RPCs (e.g. create_flow) are immediately visible.
-        try:
-            await conn.execute("NOTIFY pgrst, 'reload schema';")
-        except Exception:
+        with contextlib.suppress(Exception):
             # Non-fatal on providers that don't use PostgREST.
-            pass
+            await conn.execute("NOTIFY pgrst, 'reload schema';")
     finally:
         await conn.close()

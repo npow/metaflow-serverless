@@ -14,9 +14,9 @@ from typing import Any
 class StackConfig:
     """Represents the chosen provider stack for a Metaflow ephemeral service deployment."""
 
-    compute: str   # "supabase" | "cloud-run" | "render"
+    compute: str  # "supabase" | "cloud-run" | "render"
     database: str  # "supabase" | "neon" | "cockroachdb"
-    storage: str   # "supabase" | "r2" | "b2"
+    storage: str  # "supabase" | "r2" | "b2"
 
     def validate(self) -> None:
         """Validate that the stack combination is compatible."""

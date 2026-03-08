@@ -54,7 +54,7 @@ class CloudflareR2Provider(StorageProvider):
 
     name = "r2"
     display_name = "Cloudflare R2 (S3-compatible, free tier, zero egress)"
-    requires_cc = True   # CC required for R2 even on free tier.
+    requires_cc = True  # CC required for R2 even on free tier.
     verification = "email"
     cli_name = "wrangler"
 
@@ -77,19 +77,17 @@ class CloudflareR2Provider(StorageProvider):
         account ID and the API token for subsequent REST API calls.
         """
         await self.ensure_cli_installed()
-        console.print(
-            "[bold]Opening browser for Cloudflare login...[/bold]"
-        )
+        console.print("[bold]Opening browser for Cloudflare login...[/bold]")
         proc = await asyncio.create_subprocess_exec(
-            "wrangler", "login",
+            "wrangler",
+            "login",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
             raise RuntimeError(
-                f"Cloudflare login failed (exit {proc.returncode}):\n"
-                f"{stderr.decode().strip()}"
+                f"Cloudflare login failed (exit {proc.returncode}):\n{stderr.decode().strip()}"
             )
 
         # Retrieve the account ID and API token.
@@ -118,22 +116,17 @@ class CloudflareR2Provider(StorageProvider):
                 self._api_token = env_token
                 return
             raise RuntimeError(
-                f"Could not determine Cloudflare account information "
-                f"(exit {rc}):\n{stderr.strip()}"
+                f"Could not determine Cloudflare account information (exit {rc}):\n{stderr.strip()}"
             )
 
         try:
             data = json.loads(stdout)
             accounts: list[dict] = data.get("accounts", [])
             if not accounts:
-                raise RuntimeError(
-                    "No Cloudflare accounts found for the authenticated user."
-                )
+                raise RuntimeError("No Cloudflare accounts found for the authenticated user.")
             self._account_id = env_account_id or accounts[0]["id"]
         except (json.JSONDecodeError, KeyError) as exc:
-            raise RuntimeError(
-                f"Unexpected output from 'wrangler whoami':\n{stdout}"
-            ) from exc
+            raise RuntimeError(f"Unexpected output from 'wrangler whoami':\n{stdout}") from exc
 
         # Retrieve the OAuth token from wrangler's config.
         if env_token:
@@ -184,9 +177,7 @@ class CloudflareR2Provider(StorageProvider):
     def _auth_headers(self) -> dict[str, str]:
         """Return HTTP headers for the Cloudflare REST API."""
         if not self._api_token:
-            raise RuntimeError(
-                "Not authenticated. Call login() before provision()."
-            )
+            raise RuntimeError("Not authenticated. Call login() before provision().")
         return {
             "Authorization": f"Bearer {self._api_token}",
             "Content-Type": "application/json",
@@ -219,30 +210,19 @@ class CloudflareR2Provider(StorageProvider):
         assert account_id  # guarded above
 
         # Create the R2 bucket via wrangler CLI.
-        console.print(
-            f"[bold]Creating Cloudflare R2 bucket:[/bold] {bucket_name!r}"
-        )
-        rc, stdout, stderr = await _run_async(
-            ["wrangler", "r2", "bucket", "create", bucket_name]
-        )
+        console.print(f"[bold]Creating Cloudflare R2 bucket:[/bold] {bucket_name!r}")
+        rc, stdout, stderr = await _run_async(["wrangler", "r2", "bucket", "create", bucket_name])
         if rc != 0 and "already exists" not in (stdout + stderr).lower():
             raise RuntimeError(
-                f"Failed to create R2 bucket {bucket_name!r} (exit {rc}):\n"
-                f"{stderr.strip()}"
+                f"Failed to create R2 bucket {bucket_name!r} (exit {rc}):\n{stderr.strip()}"
             )
 
         # Generate an R2 API token via the Cloudflare REST API.
-        console.print(
-            "[bold]Generating R2 API credentials via Cloudflare API...[/bold]"
-        )
-        access_key_id, secret_access_key = await self._create_r2_api_token(
-            account_id, bucket_name
-        )
+        console.print("[bold]Generating R2 API credentials via Cloudflare API...[/bold]")
+        access_key_id, secret_access_key = await self._create_r2_api_token(account_id, bucket_name)
 
         endpoint_url = f"https://{account_id}.r2.cloudflarestorage.com"
-        console.print(
-            f"[green]R2 bucket provisioned:[/green] {endpoint_url}/{bucket_name}"
-        )
+        console.print(f"[green]R2 bucket provisioned:[/green] {endpoint_url}/{bucket_name}")
         return StorageCredentials(
             endpoint_url=endpoint_url,
             access_key_id=access_key_id,
@@ -251,9 +231,7 @@ class CloudflareR2Provider(StorageProvider):
             region="auto",  # R2 uses "auto" as the region.
         )
 
-    async def _create_r2_api_token(
-        self, account_id: str, bucket_name: str
-    ) -> tuple[str, str]:
+    async def _create_r2_api_token(self, account_id: str, bucket_name: str) -> tuple[str, str]:
         """
         Create an R2 API token scoped to *bucket_name* via the Cloudflare API.
 
@@ -295,17 +273,13 @@ class CloudflareR2Provider(StorageProvider):
         data = response.json()
         if not data.get("success"):
             errors = data.get("errors", [])
-            raise RuntimeError(
-                f"Cloudflare API error when creating R2 token: {errors}"
-            )
+            raise RuntimeError(f"Cloudflare API error when creating R2 token: {errors}")
 
         result = data.get("result", {})
         access_key_id: str = result.get("accessKeyId", "")
         secret_access_key: str = result.get("secretAccessKey", "")
 
         if not access_key_id or not secret_access_key:
-            raise RuntimeError(
-                f"Cloudflare API returned incomplete R2 token data: {result!r}"
-            )
+            raise RuntimeError(f"Cloudflare API returned incomplete R2 token data: {result!r}")
 
         return access_key_id, secret_access_key

@@ -46,7 +46,7 @@ class RenderProvider(ComputeProvider):
 
     name = "render"
     display_name = "Render (managed containers, free tier)"
-    requires_cc = True   # Render requires CC even for free tier deployments.
+    requires_cc = True  # Render requires CC even for free tier deployments.
     verification = "email+cc"
     cli_name = None  # Uses REST API directly.
 
@@ -75,8 +75,8 @@ class RenderProvider(ComputeProvider):
             )
             try:
                 api_key = input("Paste your Render API key: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                raise RuntimeError("Render login cancelled by user.")
+            except (EOFError, KeyboardInterrupt) as exc:
+                raise RuntimeError("Render login cancelled by user.") from exc
 
         if not api_key:
             raise RuntimeError("No Render API key provided; cannot authenticate.")
@@ -91,9 +91,7 @@ class RenderProvider(ComputeProvider):
     def _headers(self) -> dict[str, str]:
         """Return HTTP headers for the Render REST API."""
         if not self._api_key:
-            raise RuntimeError(
-                "Not authenticated. Call login() before provision()."
-            )
+            raise RuntimeError("Not authenticated. Call login() before provision().")
         return {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
@@ -196,9 +194,7 @@ class RenderProvider(ComputeProvider):
                 deploy_response.raise_for_status()
                 service_id = existing_id
             else:
-                console.print(
-                    f"[bold]Creating Render web service:[/bold] {service_name!r}"
-                )
+                console.print(f"[bold]Creating Render web service:[/bold] {service_name!r}")
                 payload = {
                     "type": "web_service",
                     "name": service_name,
@@ -234,14 +230,10 @@ class RenderProvider(ComputeProvider):
                 service_data = create_response.json()
                 service_id = service_data["service"]["id"]
 
-            console.print(
-                "[bold]Waiting for Render service to become live...[/bold]"
-            )
+            console.print("[bold]Waiting for Render service to become live...[/bold]")
             service_url = await self._wait_for_service_url(client, service_id)
 
-        console.print(
-            f"[green]Render service deployed:[/green] {service_url}"
-        )
+        console.print(f"[green]Render service deployed:[/green] {service_url}")
         return ComputeCredentials(service_url=service_url)
 
     async def _wait_for_service_url(

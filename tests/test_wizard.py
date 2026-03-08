@@ -1,54 +1,51 @@
 """
 Tests for the setup wizard (metaflow_serverless.setup.wizard).
 """
+
 from __future__ import annotations
 
-import asyncio
 import json
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, call
-
-import pytest
+from unittest.mock import AsyncMock, patch
 
 from metaflow_serverless.providers.base import (
     ComputeCredentials,
     DatabaseCredentials,
     StorageCredentials,
 )
-from metaflow_serverless.providers.registry import COMPATIBLE_STACKS, compatible_storage
-
+from metaflow_serverless.providers.registry import compatible_storage
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_db_creds(**kwargs) -> DatabaseCredentials:
-    defaults = dict(
-        dsn="postgresql://user:pass@host:5432/db",
-        host="host",
-        port=5432,
-        database="db",
-        username="user",
-        password="pass",
-    )
+    defaults = {
+        "dsn": "postgresql://user:pass@host:5432/db",
+        "host": "host",
+        "port": 5432,
+        "database": "db",
+        "username": "user",
+        "password": "pass",
+    }
     defaults.update(kwargs)
     return DatabaseCredentials(**defaults)
 
 
 def _make_storage_creds(**kwargs) -> StorageCredentials:
-    defaults = dict(
-        endpoint_url="https://bucket.example.com",
-        access_key_id="AKID",
-        secret_access_key="secret",
-        bucket="testbucket",
-        region="auto",
-    )
+    defaults = {
+        "endpoint_url": "https://bucket.example.com",
+        "access_key_id": "AKID",
+        "secret_access_key": "secret",
+        "bucket": "testbucket",
+        "region": "auto",
+    }
     defaults.update(kwargs)
     return StorageCredentials(**defaults)
 
 
 def _make_compute_creds(**kwargs) -> ComputeCredentials:
-    defaults = dict(service_url="https://myservice.run.app")
+    defaults = {"service_url": "https://myservice.run.app"}
     defaults.update(kwargs)
     return ComputeCredentials(**defaults)
 
@@ -56,6 +53,7 @@ def _make_compute_creds(**kwargs) -> ComputeCredentials:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestWizardWritesConfig:
     async def test_wizard_writes_config_after_provision(self, tmp_path):
@@ -117,7 +115,7 @@ class TestWizardMigrationsAsyncpg:
         """
         _run_migrations_asyncpg is called with the db DSN.
         """
-        from metaflow_serverless.setup.wizard import SetupWizard, _run_migrations_asyncpg
+        from metaflow_serverless.setup.wizard import SetupWizard
 
         cfg_path = tmp_path / ".metaflowconfig"
         wizard = SetupWizard(config_path=str(cfg_path))

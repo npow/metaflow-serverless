@@ -8,7 +8,6 @@ directly (no CLI required) via application keys.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import os
 
@@ -85,13 +84,11 @@ class BackblazeB2Provider(StorageProvider):
             try:
                 key_id = input("Paste your B2 Application Key ID: ").strip()
                 key = input("Paste your B2 Application Key: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                raise RuntimeError("Backblaze B2 login cancelled by user.")
+            except (EOFError, KeyboardInterrupt) as exc:
+                raise RuntimeError("Backblaze B2 login cancelled by user.") from exc
 
         if not key_id or not key:
-            raise RuntimeError(
-                "No Backblaze credentials provided; cannot authenticate."
-            )
+            raise RuntimeError("No Backblaze credentials provided; cannot authenticate.")
 
         self._key_id = key_id
         self._key = key
@@ -106,9 +103,7 @@ class BackblazeB2Provider(StorageProvider):
         Stores the token, API URL, account ID, and S3-compatible API URL for
         later use.
         """
-        credentials = base64.b64encode(
-            f"{self._key_id}:{self._key}".encode()
-        ).decode()
+        credentials = base64.b64encode(f"{self._key_id}:{self._key}".encode()).decode()
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
@@ -117,9 +112,7 @@ class BackblazeB2Provider(StorageProvider):
             )
 
         if response.status_code == 401:
-            raise RuntimeError(
-                "Backblaze authentication failed: invalid application key."
-            )
+            raise RuntimeError("Backblaze authentication failed: invalid application key.")
         response.raise_for_status()
 
         data = response.json()
@@ -153,9 +146,7 @@ class BackblazeB2Provider(StorageProvider):
         if not self._auth_token:
             raise RuntimeError("Call login() before provision().")
 
-        console.print(
-            f"[bold]Provisioning Backblaze B2 bucket:[/bold] {bucket_name!r}"
-        )
+        console.print(f"[bold]Provisioning Backblaze B2 bucket:[/bold] {bucket_name!r}")
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             headers = {
@@ -179,9 +170,7 @@ class BackblazeB2Provider(StorageProvider):
             if existing:
                 bucket_id: str = existing["bucketId"]
                 region = self._region_from_endpoint(self._s3_api_url or "")
-                console.print(
-                    f"[yellow]Reusing existing B2 bucket:[/yellow] {bucket_name!r}"
-                )
+                console.print(f"[yellow]Reusing existing B2 bucket:[/yellow] {bucket_name!r}")
             else:
                 # Create the bucket with private access.
                 create_response = await client.post(
@@ -197,14 +186,10 @@ class BackblazeB2Provider(StorageProvider):
                 create_data = create_response.json()
                 bucket_id = create_data["bucketId"]
                 region = self._region_from_endpoint(self._s3_api_url or "")
-                console.print(
-                    f"[green]B2 bucket created:[/green] {bucket_name!r}"
-                )
+                console.print(f"[green]B2 bucket created:[/green] {bucket_name!r}")
 
             # Create a scoped application key for this bucket.
-            console.print(
-                "[bold]Creating scoped application key for bucket...[/bold]"
-            )
+            console.print("[bold]Creating scoped application key for bucket...[/bold]")
             key_response = await client.post(
                 f"{self._api_url}/b2api/v3/b2_create_key",
                 json={
@@ -229,8 +214,7 @@ class BackblazeB2Provider(StorageProvider):
         endpoint_url = self._s3_api_url or "https://s3.us-east-005.backblazeb2.com"
 
         console.print(
-            f"[green]Backblaze B2 provisioning complete.[/green] "
-            f"Endpoint: {endpoint_url}"
+            f"[green]Backblaze B2 provisioning complete.[/green] Endpoint: {endpoint_url}"
         )
         return StorageCredentials(
             endpoint_url=endpoint_url,

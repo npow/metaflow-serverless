@@ -6,7 +6,6 @@ import pytest
 
 from metaflow_serverless.providers.supabase import SupabaseStorageProvider
 
-
 _KEYS_PAYLOAD = [
     {"name": "anon", "api_key": "anon_key"},
     {"name": "service_role", "api_key": "service_key"},

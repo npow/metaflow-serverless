@@ -1,10 +1,10 @@
 """
 Tests for metaflow_serverless.config (MetaflowConfig and StackConfig).
 """
+
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
