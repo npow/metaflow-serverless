@@ -143,6 +143,19 @@ CREATE TABLE IF NOT EXISTS artifact_v3 (
 );
 
 -- ---------------------------------------------------------------------------
+-- service_quota_monthly
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS service_quota_monthly (
+    scope          VARCHAR(255) NOT NULL,
+    period_start   DATE         NOT NULL,
+    request_count  BIGINT       NOT NULL DEFAULT 0,
+    egress_bytes   BIGINT       NOT NULL DEFAULT 0,
+    updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT service_quota_monthly_pkey PRIMARY KEY (scope, period_start)
+);
+
+-- ---------------------------------------------------------------------------
 -- pg_notify triggers (broadcasts on channel 'notify')
 -- ---------------------------------------------------------------------------
 

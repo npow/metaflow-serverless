@@ -66,6 +66,26 @@ The wizard writes Metaflow global config to:
 ~/.metaflowconfig/config.json
 ```
 
+### Supabase quota guardrails
+
+For `compute=supabase`, the deployed `metadata-router` edge function enforces a monthly quota budget before forwarding requests. By default it uses:
+
+- `MF_MONTHLY_REQUEST_LIMIT=500000`
+- `MF_MONTHLY_EGRESS_LIMIT_BYTES=5368709120` (5 GiB)
+
+These defaults are intended to keep a single project within the current Supabase Free plan quotas for Edge Function invocations and uncached egress. Override them at deploy time by exporting:
+
+```bash
+export MF_MONTHLY_REQUEST_LIMIT=250000
+export MF_MONTHLY_EGRESS_LIMIT_BYTES=$((2 * 1024 * 1024 * 1024))
+export MF_QUOTA_SCOPE=my-project
+mf-setup
+```
+
+When the quota is exhausted, the edge function returns HTTP `429` instead of continuing to forward requests.
+
+Note: Supabase applies usage quotas at the organization level. This guardrail is enforced per deployed metadata service, so it is a conservative approximation rather than a replacement for checking the Supabase usage page.
+
 ### Supabase CLI v2 notes
 
 - The setup flow is compatible with recent Supabase CLI versions where:

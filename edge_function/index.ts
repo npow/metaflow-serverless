@@ -6,6 +6,15 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const SERVICE_AUTH_KEY = Deno.env.get("METAFLOW_SERVICE_AUTH_KEY") ?? "";
 const REQUIRE_AUTH = Deno.env.get("REQUIRE_AUTH") !== "false";
+const QUOTA_SCOPE = Deno.env.get("MF_QUOTA_SCOPE") ?? "global";
+const MONTHLY_REQUEST_LIMIT = parsePositiveInt(
+  Deno.env.get("MF_MONTHLY_REQUEST_LIMIT"),
+  500_000,
+);
+const MONTHLY_EGRESS_LIMIT_BYTES = parsePositiveInt(
+  Deno.env.get("MF_MONTHLY_EGRESS_LIMIT_BYTES"),
+  5 * 1024 * 1024 * 1024,
+);
 
 const POSTGREST_BASE = `${SUPABASE_URL}/rest/v1`;
 
@@ -130,6 +139,15 @@ async function pgPost(path: string, body: unknown): Promise<Response> {
   });
 }
 
+async function pgRpc<T>(name: string, body: unknown): Promise<T> {
+  const res = await pgPost(`/rpc/${name}`, body);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`RPC ${name} failed: ${res.status} ${text}`);
+  }
+  return await res.json() as T;
+}
+
 // ---------------------------------------------------------------------------
 // Response helpers
 // ---------------------------------------------------------------------------
@@ -139,6 +157,22 @@ function jsonResponse(data: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });
+}
+
+function quotaHeaders(
+  usage: QuotaStatus | null,
+  extra: Record<string, string> = {},
+): HeadersInit {
+  const headers: Record<string, string> = { ...CORS_HEADERS, ...extra };
+  if (usage) {
+    headers["X-Metaflow-Quota-Scope"] = usage.scope;
+    headers["X-Metaflow-Quota-Period-Start"] = usage.period_start;
+    headers["X-Metaflow-Quota-Requests-Used"] = String(usage.request_count);
+    headers["X-Metaflow-Quota-Requests-Limit"] = String(usage.request_limit);
+    headers["X-Metaflow-Quota-Egress-Used"] = String(usage.egress_bytes);
+    headers["X-Metaflow-Quota-Egress-Limit"] = String(usage.egress_limit);
+  }
+  return headers;
 }
 
 // Forward a PostgREST response verbatim (preserving status/body) but add CORS.
@@ -179,6 +213,32 @@ async function validateAuth(req: Request): Promise<boolean> {
   if (!SERVICE_AUTH_KEY) return false;
   const provided = req.headers.get("x-api-key");
   return typeof provided === "string" && provided.length > 0 && provided === SERVICE_AUTH_KEY;
+}
+
+interface QuotaStatus {
+  allowed: boolean;
+  reason?: string;
+  scope: string;
+  period_start: string;
+  request_count: number;
+  request_limit: number;
+  egress_bytes: number;
+  egress_limit: number;
+}
+
+async function reserveQuota(): Promise<QuotaStatus> {
+  return await pgRpc<QuotaStatus>("enforce_monthly_quota", {
+    p_scope: QUOTA_SCOPE,
+    p_request_limit: MONTHLY_REQUEST_LIMIT,
+    p_egress_limit: MONTHLY_EGRESS_LIMIT_BYTES,
+  });
+}
+
+async function recordEgress(bytes: number): Promise<void> {
+  await pgRpc("record_monthly_egress", {
+    p_scope: QUOTA_SCOPE,
+    p_bytes: bytes,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -603,13 +663,29 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return corsResponse(204);
   }
 
+  let quotaUsage: QuotaStatus | null = null;
+  try {
+    quotaUsage = await reserveQuota();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return new Response(JSON.stringify({ error: "Quota check failed", detail: message }), {
+      status: 503,
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    });
+  }
+  if (!quotaUsage.allowed) {
+    return quotaExceededResponse(quotaUsage);
+  }
+
   // Auth check.
   const authed = await validateAuth(req);
   if (!authed) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+    const unauthorized = new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
-      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      headers: quotaHeaders(quotaUsage, { "Content-Type": "application/json" }),
     });
+    await recordResponseEgress(unauthorized);
+    return unauthorized;
   }
 
   const url = new URL(req.url);
@@ -621,23 +697,30 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const match = matchRoute(COMPILED_ROUTES, req.method, pathname);
 
   if (!match) {
-    return new Response(
+    const notFound = new Response(
       JSON.stringify({ error: "Not found", path: pathname, method: req.method }),
       {
         status: 404,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+        headers: quotaHeaders(quotaUsage, { "Content-Type": "application/json" }),
       },
     );
+    await recordResponseEgress(notFound);
+    return notFound;
   }
 
   try {
-    return await match.handler(req, match.params, query);
+    const response = await match.handler(req, match.params, query);
+    const withUsage = withQuotaHeaders(response, quotaUsage);
+    await recordResponseEgress(withUsage);
+    return withUsage;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return new Response(JSON.stringify({ error: "Internal server error", detail: message }), {
+    const failure = new Response(JSON.stringify({ error: "Internal server error", detail: message }), {
       status: 500,
-      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      headers: quotaHeaders(quotaUsage, { "Content-Type": "application/json" }),
     });
+    await recordResponseEgress(failure);
+    return failure;
   }
 });
 
@@ -666,4 +749,53 @@ function normalizePath(pathname: string): string {
     return "/" + parts.slice(2).join("/");
   }
   return clean;
+}
+
+function parsePositiveInt(raw: string | null, fallback: number): number {
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function withQuotaHeaders(res: Response, usage: QuotaStatus | null): Response {
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(quotaHeaders(usage))) {
+    headers.set(k, v);
+  }
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers,
+  });
+}
+
+async function responseSizeBytes(res: Response): Promise<number> {
+  if (!res.body) return 0;
+  const buf = await res.clone().arrayBuffer();
+  return buf.byteLength;
+}
+
+async function recordResponseEgress(res: Response): Promise<void> {
+  try {
+    await recordEgress(await responseSizeBytes(res));
+  } catch (err) {
+    console.error("Failed to record egress", err);
+  }
+}
+
+function quotaExceededResponse(usage: QuotaStatus): Response {
+  const detail = usage.reason === "egress_limit_exceeded"
+    ? "Monthly egress quota exceeded"
+    : "Monthly invocation quota exceeded";
+  return new Response(
+    JSON.stringify({
+      error: "Quota exceeded",
+      detail,
+      quota: usage,
+    }),
+    {
+      status: 429,
+      headers: quotaHeaders(usage, { "Content-Type": "application/json" }),
+    },
+  );
 }

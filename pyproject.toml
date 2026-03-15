@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "metaflow-serverless"
-version = "0.2.0"
+version = "0.2.1"
 description = "Run the Metaflow metadata service on serverless Postgres — no always-on servers"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,6 +21,15 @@ dependencies = [
 [project.scripts]
 mf-setup = "metaflow_serverless.cli:setup_entrypoint"
 mf-ui = "metaflow_serverless.cli:ui_entrypoint"
+
+[tool.hatch.build]
+exclude = [
+    ".venv311",
+    ".venv",
+    "venv",
+    ".metaflow",
+    "supabase",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/metaflow_serverless"]

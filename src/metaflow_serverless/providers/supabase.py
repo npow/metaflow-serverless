@@ -608,6 +608,12 @@ class SupabaseComputeProvider(ComputeProvider):
         if not service_auth_key:
             # Generate a random API key used by Metaflow clients and mf-ui.
             service_auth_key = secrets.token_urlsafe(32)
+        monthly_request_limit = os.environ.get("MF_MONTHLY_REQUEST_LIMIT", "500000").strip()
+        monthly_egress_limit = os.environ.get(
+            "MF_MONTHLY_EGRESS_LIMIT_BYTES",
+            str(5 * 1024 * 1024 * 1024),
+        ).strip()
+        quota_scope = os.environ.get("MF_QUOTA_SCOPE", "global").strip() or "global"
 
         # Set DB credentials as edge function secrets.
         secrets_env = "\n".join(
@@ -619,6 +625,9 @@ class SupabaseComputeProvider(ComputeProvider):
                 f"MF_METADATA_DB_PASS={db.password}",
                 f"MF_METADATA_DB_NAME={db.database}",
                 f"{self._SERVICE_AUTH_ENV}={service_auth_key}",
+                f"MF_MONTHLY_REQUEST_LIMIT={monthly_request_limit}",
+                f"MF_MONTHLY_EGRESS_LIMIT_BYTES={monthly_egress_limit}",
+                f"MF_QUOTA_SCOPE={quota_scope}",
             ]
         )
 

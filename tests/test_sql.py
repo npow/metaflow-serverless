@@ -26,6 +26,7 @@ class TestSchemaLoads:
             "tasks_v3",
             "metadata_v3",
             "artifact_v3",
+            "service_quota_monthly",
         ]
         for table in expected_tables:
             assert table in schema, f"Table {table!r} not found in schema.sql"
@@ -57,6 +58,8 @@ class TestProceduresLoads:
         """procedures.sql defines all 9 expected function names."""
         procs = load_procedures()
         expected_functions = [
+            "enforce_monthly_quota",
+            "record_monthly_egress",
             "heartbeat_run",
             "heartbeat_task",
             "mutate_run_tags",

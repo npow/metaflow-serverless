@@ -31,6 +31,128 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Helper: reserve one request against the current UTC month quota bucket.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION enforce_monthly_quota(
+    p_scope          TEXT,
+    p_request_limit  BIGINT,
+    p_egress_limit   BIGINT
+)
+RETURNS JSON
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_scope         TEXT := COALESCE(NULLIF(p_scope, ''), 'global');
+    v_period_start  DATE := DATE_TRUNC('month', TIMEZONE('utc', NOW()))::DATE;
+    v_row           service_quota_monthly%ROWTYPE;
+BEGIN
+    IF p_request_limit IS NULL OR p_request_limit <= 0 THEN
+        RAISE EXCEPTION 'enforce_monthly_quota: p_request_limit must be > 0';
+    END IF;
+    IF p_egress_limit IS NULL OR p_egress_limit <= 0 THEN
+        RAISE EXCEPTION 'enforce_monthly_quota: p_egress_limit must be > 0';
+    END IF;
+
+    INSERT INTO service_quota_monthly (scope, period_start)
+    VALUES (v_scope, v_period_start)
+    ON CONFLICT (scope, period_start) DO NOTHING;
+
+    SELECT *
+      INTO v_row
+      FROM service_quota_monthly
+     WHERE scope = v_scope
+       AND period_start = v_period_start
+     FOR UPDATE;
+
+    IF v_row.request_count >= p_request_limit THEN
+        RETURN json_build_object(
+            'allowed', false,
+            'reason', 'request_limit_exceeded',
+            'scope', v_scope,
+            'period_start', v_period_start,
+            'request_count', v_row.request_count,
+            'request_limit', p_request_limit,
+            'egress_bytes', v_row.egress_bytes,
+            'egress_limit', p_egress_limit
+        );
+    END IF;
+
+    IF v_row.egress_bytes >= p_egress_limit THEN
+        RETURN json_build_object(
+            'allowed', false,
+            'reason', 'egress_limit_exceeded',
+            'scope', v_scope,
+            'period_start', v_period_start,
+            'request_count', v_row.request_count,
+            'request_limit', p_request_limit,
+            'egress_bytes', v_row.egress_bytes,
+            'egress_limit', p_egress_limit
+        );
+    END IF;
+
+    UPDATE service_quota_monthly
+       SET request_count = request_count + 1,
+           updated_at = NOW()
+     WHERE scope = v_scope
+       AND period_start = v_period_start
+     RETURNING *
+      INTO v_row;
+
+    RETURN json_build_object(
+        'allowed', true,
+        'scope', v_scope,
+        'period_start', v_period_start,
+        'request_count', v_row.request_count,
+        'request_limit', p_request_limit,
+        'egress_bytes', v_row.egress_bytes,
+        'egress_limit', p_egress_limit
+    );
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Helper: record response egress bytes against the current UTC month bucket.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION record_monthly_egress(
+    p_scope         TEXT,
+    p_bytes         BIGINT
+)
+RETURNS JSON
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_scope         TEXT := COALESCE(NULLIF(p_scope, ''), 'global');
+    v_period_start  DATE := DATE_TRUNC('month', TIMEZONE('utc', NOW()))::DATE;
+    v_row           service_quota_monthly%ROWTYPE;
+BEGIN
+    IF p_bytes IS NULL OR p_bytes < 0 THEN
+        RAISE EXCEPTION 'record_monthly_egress: p_bytes must be >= 0';
+    END IF;
+
+    INSERT INTO service_quota_monthly (scope, period_start)
+    VALUES (v_scope, v_period_start)
+    ON CONFLICT (scope, period_start) DO NOTHING;
+
+    UPDATE service_quota_monthly
+       SET egress_bytes = egress_bytes + p_bytes,
+           updated_at = NOW()
+     WHERE scope = v_scope
+       AND period_start = v_period_start
+     RETURNING *
+      INTO v_row;
+
+    RETURN json_build_object(
+        'scope', v_scope,
+        'period_start', v_period_start,
+        'request_count', v_row.request_count,
+        'egress_bytes', v_row.egress_bytes
+    );
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- 1. heartbeat_run
 -- ---------------------------------------------------------------------------
 
