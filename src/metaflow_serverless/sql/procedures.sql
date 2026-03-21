@@ -12,6 +12,7 @@ CREATE OR REPLACE FUNCTION _resolve_run_number(p_flow_id text, p_run_id text)
 RETURNS BIGINT
 LANGUAGE plpgsql
 STABLE
+SET search_path = ''
 AS $$
 DECLARE
     v_run_number BIGINT;
@@ -41,6 +42,7 @@ CREATE OR REPLACE FUNCTION enforce_monthly_quota(
 )
 RETURNS JSON
 LANGUAGE plpgsql
+SET search_path = ''
 AS $$
 DECLARE
     v_scope         TEXT := COALESCE(NULLIF(p_scope, ''), 'global');
@@ -121,6 +123,7 @@ CREATE OR REPLACE FUNCTION record_monthly_egress(
 )
 RETURNS JSON
 LANGUAGE plpgsql
+SET search_path = ''
 AS $$
 DECLARE
     v_scope         TEXT := COALESCE(NULLIF(p_scope, ''), 'global');
@@ -163,6 +166,7 @@ CREATE OR REPLACE FUNCTION heartbeat_run(
 )
 RETURNS JSON
 LANGUAGE plpgsql
+SET search_path = ''
 AS $$
 DECLARE
     v_run_number BIGINT;
@@ -200,6 +204,7 @@ CREATE OR REPLACE FUNCTION heartbeat_task(
 )
 RETURNS JSON
 LANGUAGE plpgsql
+SET search_path = ''
 AS $$
 DECLARE
     v_run_number BIGINT;
@@ -259,6 +264,7 @@ CREATE OR REPLACE FUNCTION mutate_run_tags(
 )
 RETURNS JSON
 LANGUAGE plpgsql
+SET search_path = ''
 AS $$
 DECLARE
     v_run_number  BIGINT;
@@ -363,6 +369,7 @@ CREATE OR REPLACE FUNCTION get_artifacts_latest(
 RETURNS SETOF artifact_v3
 LANGUAGE plpgsql
 STABLE
+SET search_path = ''
 AS $$
 DECLARE
     v_run_number BIGINT;
@@ -438,6 +445,7 @@ RETURNS TABLE(
 )
 LANGUAGE plpgsql
 STABLE
+SET search_path = ''
 AS $$
 DECLARE
     v_run_number BIGINT;
@@ -482,6 +490,7 @@ CREATE OR REPLACE FUNCTION create_flow(
 )
 RETURNS flows_v3
 LANGUAGE plpgsql
+SET search_path = ''
 AS $$
 DECLARE
     v_row flows_v3;
@@ -519,6 +528,7 @@ CREATE OR REPLACE FUNCTION create_run(
 )
 RETURNS runs_v3
 LANGUAGE plpgsql
+SET search_path = ''
 AS $$
 DECLARE
     v_row runs_v3;
@@ -558,6 +568,7 @@ CREATE OR REPLACE FUNCTION create_step(
 )
 RETURNS steps_v3
 LANGUAGE plpgsql
+SET search_path = ''
 AS $$
 DECLARE
     v_run_number BIGINT;
@@ -607,6 +618,7 @@ CREATE OR REPLACE FUNCTION create_task(
 )
 RETURNS tasks_v3
 LANGUAGE plpgsql
+SET search_path = ''
 AS $$
 DECLARE
     v_run_number BIGINT;

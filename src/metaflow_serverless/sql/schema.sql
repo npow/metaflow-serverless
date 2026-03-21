@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS flows_v3 (
 
 ALTER TABLE flows_v3 ENABLE ROW LEVEL SECURITY;
 
+-- Deny all non-service_role access (service_role bypasses RLS).
+CREATE POLICY "service_role_only" ON flows_v3 FOR ALL USING (false);
+
 CREATE INDEX IF NOT EXISTS flows_v3_tags_gin
     ON flows_v3 USING GIN ((tags || system_tags));
 
@@ -37,6 +40,8 @@ CREATE TABLE IF NOT EXISTS runs_v3 (
 );
 
 ALTER TABLE runs_v3 ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "service_role_only" ON runs_v3 FOR ALL USING (false);
 
 -- Unique run_id per flow (partial: only when run_id is not null)
 CREATE UNIQUE INDEX IF NOT EXISTS runs_v3_flow_id_run_id_unique
@@ -74,6 +79,8 @@ CREATE TABLE IF NOT EXISTS steps_v3 (
 
 ALTER TABLE steps_v3 ENABLE ROW LEVEL SECURITY;
 
+CREATE POLICY "service_role_only" ON steps_v3 FOR ALL USING (false);
+
 -- ---------------------------------------------------------------------------
 -- tasks_v3
 -- ---------------------------------------------------------------------------
@@ -97,6 +104,8 @@ CREATE TABLE IF NOT EXISTS tasks_v3 (
 );
 
 ALTER TABLE tasks_v3 ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "service_role_only" ON tasks_v3 FOR ALL USING (false);
 
 -- Partial index for run_id-based task lookups
 CREATE INDEX IF NOT EXISTS tasks_v3_flow_run_id_step_task
@@ -127,6 +136,8 @@ CREATE TABLE IF NOT EXISTS metadata_v3 (
 
 ALTER TABLE metadata_v3 ENABLE ROW LEVEL SECURITY;
 
+CREATE POLICY "service_role_only" ON metadata_v3 FOR ALL USING (false);
+
 -- ---------------------------------------------------------------------------
 -- artifact_v3
 -- ---------------------------------------------------------------------------
@@ -154,6 +165,8 @@ CREATE TABLE IF NOT EXISTS artifact_v3 (
 
 ALTER TABLE artifact_v3 ENABLE ROW LEVEL SECURITY;
 
+CREATE POLICY "service_role_only" ON artifact_v3 FOR ALL USING (false);
+
 -- ---------------------------------------------------------------------------
 -- service_quota_monthly
 -- ---------------------------------------------------------------------------
@@ -174,6 +187,7 @@ CREATE TABLE IF NOT EXISTS service_quota_monthly (
 CREATE OR REPLACE FUNCTION notify_on_insert()
 RETURNS TRIGGER
 LANGUAGE plpgsql
+SET search_path = ''
 AS $$
 BEGIN
     PERFORM pg_notify(
