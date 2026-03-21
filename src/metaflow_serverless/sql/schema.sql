@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS flows_v3 (
     CONSTRAINT flows_v3_pkey PRIMARY KEY (flow_id)
 );
 
+ALTER TABLE flows_v3 ENABLE ROW LEVEL SECURITY;
+
 CREATE INDEX IF NOT EXISTS flows_v3_tags_gin
     ON flows_v3 USING GIN ((tags || system_tags));
 
@@ -33,6 +35,8 @@ CREATE TABLE IF NOT EXISTS runs_v3 (
     CONSTRAINT runs_v3_pkey            PRIMARY KEY (flow_id, run_number),
     CONSTRAINT runs_v3_flow_id_fkey    FOREIGN KEY (flow_id) REFERENCES flows_v3 (flow_id)
 );
+
+ALTER TABLE runs_v3 ENABLE ROW LEVEL SECURITY;
 
 -- Unique run_id per flow (partial: only when run_id is not null)
 CREATE UNIQUE INDEX IF NOT EXISTS runs_v3_flow_id_run_id_unique
@@ -68,6 +72,8 @@ CREATE TABLE IF NOT EXISTS steps_v3 (
         REFERENCES runs_v3 (flow_id, run_number)
 );
 
+ALTER TABLE steps_v3 ENABLE ROW LEVEL SECURITY;
+
 -- ---------------------------------------------------------------------------
 -- tasks_v3
 -- ---------------------------------------------------------------------------
@@ -89,6 +95,8 @@ CREATE TABLE IF NOT EXISTS tasks_v3 (
         REFERENCES steps_v3 (flow_id, run_number, step_name),
     CONSTRAINT tasks_v3_unique_name UNIQUE (flow_id, run_number, step_name, task_name)
 );
+
+ALTER TABLE tasks_v3 ENABLE ROW LEVEL SECURITY;
 
 -- Partial index for run_id-based task lookups
 CREATE INDEX IF NOT EXISTS tasks_v3_flow_run_id_step_task
@@ -117,6 +125,8 @@ CREATE TABLE IF NOT EXISTS metadata_v3 (
     CONSTRAINT metadata_v3_pkey PRIMARY KEY (id, flow_id, run_number, step_name, task_id, field_name)
 );
 
+ALTER TABLE metadata_v3 ENABLE ROW LEVEL SECURITY;
+
 -- ---------------------------------------------------------------------------
 -- artifact_v3
 -- ---------------------------------------------------------------------------
@@ -141,6 +151,8 @@ CREATE TABLE IF NOT EXISTS artifact_v3 (
     system_tags  JSONB DEFAULT '[]',
     CONSTRAINT artifact_v3_pkey PRIMARY KEY (flow_id, run_number, step_name, task_id, attempt_id, name)
 );
+
+ALTER TABLE artifact_v3 ENABLE ROW LEVEL SECURITY;
 
 -- ---------------------------------------------------------------------------
 -- service_quota_monthly
